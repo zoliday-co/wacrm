@@ -83,3 +83,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_inbound_wamid
 ALTER TABLE ai_configs DROP CONSTRAINT IF EXISTS ai_configs_provider_check;
 ALTER TABLE ai_configs ADD CONSTRAINT ai_configs_provider_check
   CHECK (provider IN ('openai', 'anthropic', 'gemini'));
+
+-- ai_usage_log has its own provider CHECK (migration 029). Without
+-- widening it too, every Gemini usage row is rejected — and since
+-- `logAiUsage` deliberately swallows its own errors (it must never
+-- add latency to a customer-facing send), the failure is silent:
+-- token spend simply never shows in Settings → AI usage.
+ALTER TABLE ai_usage_log DROP CONSTRAINT IF EXISTS ai_usage_log_provider_check;
+ALTER TABLE ai_usage_log ADD CONSTRAINT ai_usage_log_provider_check
+  CHECK (provider IN ('openai', 'anthropic', 'gemini'));
