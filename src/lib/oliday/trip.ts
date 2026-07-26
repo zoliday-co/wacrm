@@ -225,6 +225,73 @@ export function readyToSearch(trip: Trip): boolean {
 }
 
 /**
+ * Deterministic slot extraction for LLM-down turns. Without this, the
+ * fallback loop asks a question, the traveller answers (typed or via
+ * a quick-reply button), and the answer evaporates — the same slot is
+ * asked again until the stuck counter escalates. Seen live: an
+ * "Andaman" button tap re-asked "Where are you dreaming of going?".
+ *
+ * Handles the fallback questions' own button labels exactly, plus the
+ * common free-text shapes ("4n", "5 nights", "2 adults 1 kid"). The
+ * LLM path does NOT use this — Gemini extracts with full context.
+ */
+export function deterministicExtract(text: string): Partial<Trip> {
+  const out: Partial<Trip> = {};
+  const t = text.trim();
+  if (!t) return out;
+  const lower = t.toLowerCase();
+
+  // Destination — any covered region/city mentioned.
+  const region = resolveRegion(t);
+  if (region) out.destination = t.length <= 40 ? t : region.region;
+
+  // Date flexibility — the fallback question's own button labels.
+  if (lower === 'i have exact dates') out.dateFlexibility = 'EXACT_DATES';
+  else if (lower === 'i know the month') out.dateFlexibility = 'MONTH_KNOWN';
+  else if (lower === 'flexible') out.dateFlexibility = 'FLEXIBLE';
+
+  // Nights: "4n", "4 nights", "6+ nights".
+  const nights = /(\d{1,2})\s*\+?\s*n(?:ights?)?\b/i.exec(t);
+  if (nights) {
+    const n = Number(nights[1]);
+    if (n >= 1 && n <= 30) out.nights = n;
+  }
+
+  // Party size: "2 adults", "1 kid"/"1 child"; bare "2 of us".
+  const adults = /(\d{1,2})\s*adults?\b/i.exec(t);
+  if (adults) out.adults = Number(adults[1]);
+  const children = /(\d{1,2})\s*(?:kids?|child(?:ren)?)\b/i.exec(t);
+  if (children) out.children = Number(children[1]);
+
+  // Trip type buttons.
+  if (lower === 'honeymoon') out.tripType = 'HONEYMOON';
+  else if (lower === 'family') out.tripType = 'FAMILY';
+  else if (lower === 'friends') out.tripType = 'FRIENDS';
+  else if (lower === 'solo') out.tripType = 'SOLO';
+
+  // Room occupancy buttons.
+  if (lower.startsWith('double sharing')) out.roomOccupancy = 'DOUBLE';
+  else if (lower.startsWith('triple sharing')) out.roomOccupancy = 'TRIPLE';
+
+  // Meal plan buttons.
+  if (lower === 'breakfast') out.mealPlan = 'BREAKFAST';
+  else if (lower === 'breakfast + dinner') out.mealPlan = 'BREAKFAST_DINNER';
+  else if (lower === 'all meals') out.mealPlan = 'ALL_MEALS';
+
+  // Vehicle buttons ("Sedan (4 seats)", "SUV (6 seats)", ...).
+  if (lower.startsWith('sedan')) out.vehicleType = 'SEDAN';
+  else if (lower.startsWith('suv')) out.vehicleType = 'SUV_MUV';
+  else if (lower.startsWith('tempo')) out.vehicleType = 'TEMPO_TRAVELLER';
+  else if (lower.startsWith('mini bus')) out.vehicleType = 'MINI_BUS';
+
+  // Star buttons.
+  const star = /^([345])\s*star$/i.exec(lower);
+  if (star) out.starCategory = Number(star[1]) as 3 | 4 | 5;
+
+  return out;
+}
+
+/**
  * Deterministic fallback question for the next missing slot — sent
  * when the LLM is down (the bot must never go silent) and used to
  * detect "stuck on the same slot". Options become quick-reply buttons

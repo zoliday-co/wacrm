@@ -7,6 +7,7 @@ import {
   derivedRooms,
   vehicleOptionsForPax,
   fallbackQuestion,
+  deterministicExtract,
   type Trip,
 } from './trip';
 
@@ -113,6 +114,53 @@ describe('derivations (asked never, derived always)', () => {
     expect(vehicleOptionsForPax(2)).not.toContain('MINI_BUS');
     expect(vehicleOptionsForPax(10)).not.toContain('SEDAN');
     expect(vehicleOptionsForPax(20)).toEqual(['MINI_BUS']);
+  });
+});
+
+describe('deterministicExtract (LLM-down slot filling)', () => {
+  it('consumes a destination button tap (the live "Andaman" regression)', () => {
+    const trip = mergeTrip({}, deterministicExtract('Andaman'));
+    expect(trip).toMatchObject({ destination: 'Andaman', region: 'Andaman' });
+    expect(nextMissingSlot(trip)).toBe('dates');
+  });
+
+  it('parses free-text shapes: "4n", "5 nights", party sizes', () => {
+    expect(
+      deterministicExtract('Please send me 4n packages to Andaman')
+    ).toMatchObject({
+      destination: 'Please send me 4n packages to Andaman',
+      nights: 4,
+    });
+    expect(
+      deterministicExtract('5 nights for 2 adults and 1 kid')
+    ).toMatchObject({
+      nights: 5,
+      adults: 2,
+      children: 1,
+    });
+  });
+
+  it('maps every fallback button label to its slot', () => {
+    expect(deterministicExtract('I know the month')).toEqual({
+      dateFlexibility: 'MONTH_KNOWN',
+    });
+    expect(deterministicExtract('Honeymoon')).toEqual({
+      tripType: 'HONEYMOON',
+    });
+    expect(deterministicExtract('Double sharing')).toEqual({
+      roomOccupancy: 'DOUBLE',
+    });
+    expect(deterministicExtract('Breakfast + dinner')).toEqual({
+      mealPlan: 'BREAKFAST_DINNER',
+    });
+    expect(deterministicExtract('SUV (6 seats)')).toEqual({
+      vehicleType: 'SUV_MUV',
+    });
+    expect(deterministicExtract('3 star')).toEqual({ starCategory: 3 });
+  });
+
+  it('extracts nothing from unrelated text', () => {
+    expect(deterministicExtract('what is the weather like')).toEqual({});
   });
 });
 

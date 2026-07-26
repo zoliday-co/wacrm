@@ -39,6 +39,7 @@ import {
   mergeTrip,
   nextMissingSlot,
   fallbackQuestion,
+  deterministicExtract,
   type Trip,
 } from './trip';
 
@@ -198,10 +199,17 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     }
 
     if (!result) {
-      // LLM down (twice per this turn) — never go silent (§11): ask
-      // the next deterministic slot question. Repeated LLM-down turns
-      // walk the stuck counter up and escalate below.
-      trip = bumpStuck(trip, slotBefore);
+      // LLM down (twice per this turn) — never go silent (§11).
+      // First consume the traveller's answer deterministically (their
+      // typed text or the fallback question's own button label), so
+      // the loop PROGRESSES through the slots instead of re-asking
+      // the same one until the stuck counter escalates.
+      trip = mergeTrip(trip, deterministicExtract(inbound.text));
+      const slotNow = nextMissingSlot(trip);
+      trip =
+        slotNow !== null && slotNow === slotBefore
+          ? bumpStuck(trip, slotNow)
+          : { ...trip, _stuck: undefined };
       if ((trip._stuck?.count ?? 0) >= STUCK_TURNS) {
         await sendPlain(args, HANDOFF_LINE);
         await handoff(args, trip);
@@ -331,7 +339,14 @@ async function generateTurn(input: {
             type: 'string',
             enum: ['SEDAN', 'SUV_MUV', 'TEMPO_TRAVELLER', 'MINI_BUS'],
           },
-          starCategory: { type: 'integer', enum: [3, 4, 5] },
+          // NOTE: no `enum` here — Gemini's schema dialect rejects
+          // enums on non-string types with a 400 on EVERY call (the
+          // failure that shipped the bot into permanent fallback
+          // mode). The executor range-checks instead.
+          starCategory: {
+            type: 'integer',
+            description: 'Hotel star preference: 3, 4, or 5.',
+          },
           maxPrice: {
             type: 'number',
             description:
