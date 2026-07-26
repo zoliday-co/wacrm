@@ -32,9 +32,14 @@ import { requireApiKey } from '@/lib/auth/api-context';
 // default so a modest batch isn't cut off mid-send — which would leave
 // recipient rows 'pending' and the broadcast stuck 'sending'. This is a
 // bound, not a guarantee: a near-cap (MAX_RECIPIENTS) audience can
-// still exceed 60s, so very large sends should be split across
+// still exceed 300s, so very large sends should be split across
 // requests. A durable queue/cron drain is the complete fix (follow-up).
-export const maxDuration = 60;
+//
+// 300 is the Vercel Pro ceiling; hosts with no timeout (a VPS running
+// `next start`) ignore this export entirely. At roughly 400-700ms per
+// recipient — one Meta API call plus one Supabase update, sequential —
+// this buys somewhere around 400-700 recipients per request.
+export const maxDuration = 300;
 import { ok, fail, toApiErrorResponse } from '@/lib/api/v1/respond';
 import { resolveAuditUserId, ContactError } from '@/lib/api/v1/contacts';
 import {

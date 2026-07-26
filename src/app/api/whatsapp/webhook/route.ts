@@ -7,6 +7,9 @@ import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { engineSendText } from '@/lib/flows/meta-send'
+import { isOptInKeyword, isOptOutKeyword } from '@/lib/whatsapp/consent'
+import { detectEntryContext } from '@/lib/oliday/entry'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
@@ -59,6 +62,13 @@ interface WhatsAppMessage {
   }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
+  /**
+   * Click-to-WhatsApp ad attribution (Meta/Instagram). Present on the
+   * first message a customer sends after tapping an ad — carries
+   * source_id, headline, body, ctwa_clid, etc. Persisted onto the
+   * contact (first touch wins) so the lead keeps its campaign origin.
+   */
+  referral?: Record<string, unknown>
 }
 
 interface WhatsAppWebhookEntry {
@@ -573,6 +583,26 @@ async function processMessage(
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
 
+  // Idempotency: Meta retries deliveries on slow acks, and a
+  // redelivered wamid must be a no-op — one inbound, exactly one
+  // reply. This pre-check catches the common case cheaply; the
+  // partial unique index (migration 037) backstops the race between
+  // two concurrent deliveries of the same wamid, which surfaces as a
+  // unique violation on the INSERT below and takes the same early
+  // return. Reactions never insert into `messages`, but their
+  // handler upserts on a natural key, so redelivered reactions are
+  // idempotent without this check.
+  if (message.type !== 'reaction') {
+    const { data: dupe } = await supabaseAdmin()
+      .from('messages')
+      .select('id')
+      .eq('message_id', message.id)
+      .eq('sender_type', 'customer')
+      .limit(1)
+      .maybeSingle()
+    if (dupe) return
+  }
+
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
     accountId,
@@ -708,6 +738,95 @@ async function processMessage(
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
 
   // ============================================================
+  // Consent + attribution (migration 037).
+  //
+  // Runs AFTER the message insert so a STOP is still on the record,
+  // and BEFORE any engine dispatch so an opted-out contact never
+  // receives an automated reply. The inbox shows everything either
+  // way — a human agent can always read the thread.
+  // ============================================================
+
+  // Click-to-WhatsApp ad attribution: first touch wins, later
+  // referrals never overwrite the campaign that acquired the lead.
+  if (message.referral) {
+    const { data: refRow } = await supabaseAdmin()
+      .from('contacts')
+      .select('referral')
+      .eq('id', contactRecord.id)
+      .maybeSingle()
+    if (refRow && !refRow.referral) {
+      await supabaseAdmin()
+        .from('contacts')
+        .update({ referral: message.referral })
+        .eq('id', contactRecord.id)
+    }
+  }
+
+  // Stamp how the conversation started, once (null until detected).
+  if (conversation.entry_context === null) {
+    await supabaseAdmin()
+      .from('conversations')
+      .update({
+        entry_context: detectEntryContext(
+          contentText ?? message.text?.body ?? '',
+          message.referral,
+        ),
+      })
+      .eq('id', conversation.id)
+  }
+
+  const consentText = (contentText ?? message.text?.body ?? '').trim()
+  if (isOptOutKeyword(consentText)) {
+    // Confirm FIRST (this inbound just opened the 24h window; the
+    // engine-send guard would refuse after the flag is set), then
+    // flag. One confirmation, then silence until they write in.
+    try {
+      await engineSendText({
+        accountId,
+        userId: configOwnerUserId,
+        conversationId: conversation.id,
+        contactId: contactRecord.id,
+        text: 'You have been unsubscribed and will not receive further messages from us. Reply START anytime to opt back in.',
+      })
+    } catch (err) {
+      console.error('[webhook] opt-out confirmation send failed:', err)
+    }
+    await supabaseAdmin()
+      .from('contacts')
+      .update({ opted_out: true, opted_out_at: new Date().toISOString() })
+      .eq('id', contactRecord.id)
+    return
+  }
+
+  const { data: consentRow } = await supabaseAdmin()
+    .from('contacts')
+    .select('opted_out')
+    .eq('id', contactRecord.id)
+    .maybeSingle()
+  if (consentRow?.opted_out) {
+    if (isOptInKeyword(consentText)) {
+      await supabaseAdmin()
+        .from('contacts')
+        .update({ opted_out: false, opted_out_at: null })
+        .eq('id', contactRecord.id)
+      try {
+        await engineSendText({
+          accountId,
+          userId: configOwnerUserId,
+          conversationId: conversation.id,
+          contactId: contactRecord.id,
+          text: 'Welcome back! You are subscribed again — how can we help?',
+        })
+      } catch (err) {
+        console.error('[webhook] opt-in confirmation send failed:', err)
+      }
+    }
+    // Opted out (and not opting back in): the message stays in the
+    // inbox for humans, but no flow, automation, or AI reply fires.
+    return
+  }
+
+  // ============================================================
   // Flow runner dispatch.
   //
   // If the runner consumes the message (it either advanced an active
@@ -796,17 +915,26 @@ async function processMessage(
     }).catch((err) => console.error('[automations] dispatch failed:', err))
   }
 
-  // AI auto-reply. Runs only for plain-text inbound the deterministic
-  // flow runner did NOT consume (flows win over the LLM), and only when
-  // the account has enabled it. Awaited inside `after()` (same reason as
-  // the webhook dispatch below); `dispatchInboundToAiReply` owns its
-  // eligibility gates + try/catch and never throws.
-  if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
+  // AI auto-reply for inbound the deterministic flow runner did NOT
+  // consume (flows win over the LLM). The generic assistant still
+  // only answers plain text; the Oliday agent (when enabled) also
+  // handles interactive taps and acknowledges media — that branch
+  // happens inside the dispatcher, driven by the `inbound` shape.
+  // Awaited inside `after()` (same reason as the webhook dispatch
+  // below); `dispatchInboundToAiReply` owns its eligibility gates +
+  // try/catch and never throws.
+  if (!flowConsumed) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
       contactId: contactRecord.id,
       configOwnerUserId,
+      inbound: {
+        contentType,
+        text: inboundText,
+        interactiveReplyId,
+        wamid: message.id,
+      },
     })
   }
 

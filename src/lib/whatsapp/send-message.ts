@@ -247,6 +247,38 @@ export async function sendMessageToConversation(
     );
   }
 
+  // 24-hour customer service window (Meta policy). Free-form messages
+  // are only deliverable within 24h of the customer's LAST inbound
+  // message; outside it, Meta rejects the send with an opaque error
+  // (#131047) AFTER we've already persisted the row — the message
+  // shows as sent in the inbox but never arrives. Refuse up front with
+  // a typed error instead so callers can steer to a template. Template
+  // sends are exactly the re-engagement path Meta allows, so they skip
+  // the check.
+  if (messageType !== 'template') {
+    const { data: lastInbound } = await db
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversationId)
+      .eq('sender_type', 'customer')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const windowOpen =
+      lastInbound?.created_at &&
+      Date.now() - new Date(lastInbound.created_at).getTime() <
+        24 * 60 * 60 * 1000;
+
+    if (!windowOpen) {
+      throw new SendMessageError(
+        'outside_24h_window',
+        'This conversation is outside the 24-hour customer service window — the customer has not messaged in the last 24 hours. Send an approved template message to re-engage them.',
+        422
+      );
+    }
+  }
+
   // WhatsApp config, account-scoped.
   const { data: config, error: configError } = await db
     .from('whatsapp_config')

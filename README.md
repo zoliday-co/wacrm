@@ -136,6 +136,56 @@ Full walkthrough with screenshots:
 > (Vercel, Railway, your own VPS). Hostinger is recommended, not
 > required._
 
+## Oliday enquiry bot (this fork)
+
+This fork adds **Oli**, a retrieval-grounded WhatsApp sales agent for
+[Oliday](https://oliday.app): it answers inbound enquiries grounded in
+a live Supabase catalog of real holiday packages, qualifies the
+traveller slot by slot, presents 3–5 matching packages with real
+prices, and hands qualified leads to a human in the inbox. Every
+price, hotel and itinerary line comes from a catalog row fetched in
+that turn — the model is never allowed to invent one.
+
+### Setup
+
+1. **Apply migrations** through `037_oliday_bot.sql` (adds contact
+   opt-out, webhook idempotency, and the bot's trip state on
+   `conversations`).
+2. **Env vars** — in `.env.local` (see `.env.local.example` for the
+   comments):
+
+   ```
+   BOT_ENABLED=true
+   OLIDAY_CATALOG_SUPABASE_URL=...       # the catalog project, not the CRM one
+   OLIDAY_CATALOG_SUPABASE_ANON_KEY=...  # read-only (RLS: SELECT on active_packages)
+   ```
+
+3. **Gemini key** — per-account, not an env var: in the app go to
+   **Settings → AI Assistant**, pick provider **Google (Gemini)**
+   (default model `gemini-2.5-flash-lite`), paste the key, and enable
+   **auto-reply**. The bot runs only for accounts on the Gemini
+   provider; other accounts keep the generic assistant.
+4. **Point a test WhatsApp number at it** — same as the base CRM:
+   save the number under Settings → WhatsApp, configure the Meta
+   webhook, then message the number from an allow-listed phone.
+
+### Verify grounding without WhatsApp
+
+```bash
+npx tsx --env-file=.env.local scripts/smoke-catalog.ts               # Kashmir, 5N, 2 adults
+npx tsx --env-file=.env.local scripts/smoke-catalog.ts "Coorg" 5 4 1 # city ask, 5 pax
+```
+
+Prints the top 5 scored packages with party-size pricing, then
+fetches one in full and asserts supplier fields are stripped.
+
+### Kill switch
+
+Set `BOT_ENABLED=false` (or unset it) and redeploy — the bot stops
+instantly; flows, automations, the human inbox and the generic AI
+auto-reply are unaffected. Per-thread, the bot also stands down
+whenever a human is assigned or after it hands off.
+
 ## Documentation
 
 Full self-host documentation — Supabase migrations, WhatsApp Business

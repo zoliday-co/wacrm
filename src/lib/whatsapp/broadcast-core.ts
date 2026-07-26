@@ -171,7 +171,7 @@ export async function createBroadcast(
   // params aren't silently overwritten by a later duplicate — and so
   // the row↔params pairing below (keyed by contact_id) is unambiguous.
   const seenContact = new Set<string>();
-  const deduped = resolved.filter((r) => {
+  let deduped = resolved.filter((r) => {
     if (seenContact.has(r.contactId)) return false;
     seenContact.add(r.contactId);
     return true;
@@ -181,6 +181,33 @@ export async function createBroadcast(
     throw new BroadcastError(
       'bad_request',
       'No recipients had a valid E.164 phone number',
+      400
+    );
+  }
+
+  // Consent filter (migration 037): contacts who replied STOP never
+  // receive a broadcast. Dropped here — before any recipient row is
+  // created — so trigger-maintained counts only ever cover contacts
+  // we were actually allowed to message; the caller sees them in the
+  // `rejected` count.
+  const { data: optedOutRows, error: optErr } = await db
+    .from('contacts')
+    .select('id')
+    .in('id', deduped.map((r) => r.contactId))
+    .eq('opted_out', true);
+  if (optErr) {
+    console.error('[broadcast-core] opted-out lookup failed:', optErr);
+    throw new BroadcastError('internal', 'Failed to create broadcast', 500);
+  }
+  if (optedOutRows && optedOutRows.length > 0) {
+    const optedOut = new Set(optedOutRows.map((r: { id: string }) => r.id));
+    rejected += optedOut.size;
+    deduped = deduped.filter((r) => !optedOut.has(r.contactId));
+  }
+  if (deduped.length === 0) {
+    throw new BroadcastError(
+      'bad_request',
+      'Every recipient has opted out of messages',
       400
     );
   }

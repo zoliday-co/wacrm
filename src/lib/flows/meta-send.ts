@@ -69,12 +69,19 @@ export async function engineSendText(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, opted_out')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
   if (contactErr || !contact?.phone) {
     throw new Error('contact not found for this account')
+  }
+  // Consent guard (migration 037): a STOP can land while a wait-step
+  // or flow timeout is still pending; the cron would otherwise message
+  // an unsubscribed contact. Automated sends fail loudly here so the
+  // engine logs the skip instead of silently texting them.
+  if (contact.opted_out) {
+    throw new Error('contact has opted out of messages (STOP)')
   }
 
   const sanitized = sanitizePhoneForMeta(contact.phone)
@@ -179,12 +186,19 @@ export async function engineSendMedia(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, opted_out')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
   if (contactErr || !contact?.phone) {
     throw new Error('contact not found for this account')
+  }
+  // Consent guard (migration 037): a STOP can land while a wait-step
+  // or flow timeout is still pending; the cron would otherwise message
+  // an unsubscribed contact. Automated sends fail loudly here so the
+  // engine logs the skip instead of silently texting them.
+  if (contact.opted_out) {
+    throw new Error('contact has opted out of messages (STOP)')
   }
 
   const sanitized = sanitizePhoneForMeta(contact.phone)
@@ -331,12 +345,19 @@ async function sendInteractiveViaMeta(
   // Migration 017 moved both tables to account-scoped tenancy.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, opted_out')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
   if (contactErr || !contact?.phone) {
     throw new Error('contact not found for this account')
+  }
+  // Consent guard (migration 037): a STOP can land while a wait-step
+  // or flow timeout is still pending; the cron would otherwise message
+  // an unsubscribed contact. Automated sends fail loudly here so the
+  // engine logs the skip instead of silently texting them.
+  if (contact.opted_out) {
+    throw new Error('contact has opted out of messages (STOP)')
   }
 
   const sanitized = sanitizePhoneForMeta(contact.phone)

@@ -58,6 +58,18 @@ interface NewRecipient {
   messageParams?: SendTimeParams
 }
 
+/**
+ * Unlike `/api/v1/broadcasts`, this route sends inline in the request
+ * handler rather than in `after()` — the dashboard waits on the
+ * per-recipient results to render them. That makes the platform's
+ * function timeout a hard cap on audience size, and without this
+ * export it would inherit Vercel's short default (~15s, roughly 20-30
+ * recipients) and truncate mid-loop with no resume path.
+ *
+ * 300 is the Vercel Pro ceiling; hosts with no timeout ignore it.
+ */
+export const maxDuration = 300
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient()
@@ -175,6 +187,22 @@ export async function POST(request: Request) {
     }
     const templateRow = rawTemplateRow ?? null
 
+    // Consent filter (migration 037): one query up front builds the
+    // set of numbers that replied STOP; matching recipients are
+    // reported as failed with a clear reason instead of being texted.
+    const { data: optedOutContacts } = await supabase
+      .from('contacts')
+      .select('phone')
+      .eq('account_id', accountId)
+      .eq('opted_out', true)
+    const optedOutPhones = new Set(
+      (optedOutContacts ?? [])
+        .map((c: { phone: string | null }) =>
+          c.phone ? sanitizePhoneForMeta(c.phone) : '',
+        )
+        .filter(Boolean),
+    )
+
     const results: BroadcastResult[] = []
     let sentCount = 0
     let failedCount = 0
@@ -187,6 +215,16 @@ export async function POST(request: Request) {
           phone: recipient.phone,
           status: 'failed',
           error: 'Invalid phone number format',
+        })
+        failedCount++
+        continue
+      }
+
+      if (optedOutPhones.has(sanitized)) {
+        results.push({
+          phone: recipient.phone,
+          status: 'failed',
+          error: 'Contact has opted out of messages (STOP)',
         })
         failedCount++
         continue

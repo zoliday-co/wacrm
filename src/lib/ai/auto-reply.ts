@@ -9,6 +9,8 @@ import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { isOlidayBotEnabled } from '@/lib/oliday/env'
+import { runOlidayTurn, type OlidayInbound } from '@/lib/oliday/agent'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -18,6 +20,13 @@ interface DispatchArgs {
   /** The account's WhatsApp config owner, used for the outbound send's
    *  audit columns (mirrors how the flow runner passes it through). */
   configOwnerUserId: string
+  /**
+   * The inbound message that triggered this dispatch. Optional for
+   * backward compatibility; when present, the Oliday agent (if
+   * enabled) can react to interactive taps and acknowledge media —
+   * the generic assistant below still answers plain text only.
+   */
+  inbound?: OlidayInbound
 }
 
 /**
@@ -75,6 +84,49 @@ export async function dispatchInboundToAiReply(
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
+
+    // Oliday agent branch: when the deployment enables the bot and
+    // the account runs Gemini, the trip-qualification agent owns the
+    // whole turn — including interactive taps, media acks, its own
+    // (larger) reply cap, and its own sends. The generic path below
+    // is untouched for every other account/provider.
+    if (args.inbound && isOlidayBotEnabled() && config.provider === 'gemini') {
+      const olidayLimit = checkRateLimit(
+        `ai-autoreply:${accountId}`,
+        RATE_LIMITS.aiAutoReplyAccount,
+      )
+      if (!olidayLimit.success) {
+        console.warn(
+          `[oliday] account ${accountId} hit the per-account rate limit — skipping this inbound.`,
+        )
+        return
+      }
+      await runOlidayTurn({
+        db,
+        accountId,
+        conversationId,
+        contactId,
+        configOwnerUserId,
+        config,
+        inbound: args.inbound,
+        replyCount: conv.ai_reply_count ?? 0,
+        assignedAgentId: conv.assigned_agent_id ?? null,
+      })
+      return
+    }
+
+    // Generic assistant: plain-text inbound only (button taps belong
+    // to flows; media has nothing to model). Preserves the exact
+    // pre-Oliday gating that used to live in the webhook.
+    if (
+      args.inbound &&
+      (args.inbound.interactiveReplyId ||
+        args.inbound.contentType !== 'text' ||
+        !args.inbound.text.trim())
+    ) {
+      return
+    }
+
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
     if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
