@@ -51,6 +51,38 @@ describe('perPersonPrice', () => {
     expect(q).toMatchObject({ price: 24000, basisPax: 2 });
   });
 
+  it('handles the LIVE matrix shape: string numerics + odd sizes (regression)', () => {
+    // Verbatim shape from active_packages promo 4831/h 7663: every
+    // numeric is a string, odd adultN columns exist and are "0".
+    const live = [
+      {
+        meal_plan: 'CP',
+        adult2: '13100',
+        adult3: '0',
+        adult4: '10100',
+        adult5: '0',
+        adult6: '8600',
+        adult8: '9100',
+        adult10: '8350',
+        adult12: '6000',
+        currency: 'INR',
+      },
+    ]
+    expect(perPersonPrice(live, 2)).toMatchObject({ price: 13100, basisPax: 2 })
+    expect(perPersonPrice(live, 4)).toMatchObject({ price: 10100, basisPax: 4 })
+    expect(perPersonPrice(live, 6)).toMatchObject({ price: 8600, basisPax: 6 })
+    // odd ask lands on the nearest offered size, zeros skipped
+    expect(perPersonPrice(live, 5)).toMatchObject({ basisPax: 4 })
+  })
+
+  it('quotes a real adult3 column when the supplier offers one', () => {
+    const withOdd = [{ meal_plan: 'CP', adult2: '15000', adult3: '13500' }]
+    expect(perPersonPrice(withOdd, 3)).toMatchObject({
+      price: 13500,
+      basisPax: 3,
+    })
+  })
+
   it('returns null for garbage / empty matrices', () => {
     expect(perPersonPrice(null, 4)).toBeNull();
     expect(perPersonPrice('not-an-array', 4)).toBeNull();

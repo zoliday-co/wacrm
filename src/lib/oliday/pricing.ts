@@ -12,19 +12,15 @@
 import type { MealPlan } from './trip';
 
 /** One entry of the supplier price matrix (fields we consume; rows
- *  carry more that we pass through untouched). */
+ *  carry more that we pass through untouched). The live scraper
+ *  stores every numeric as a string ("adult2":"13100") — hence
+ *  `number | string` throughout and the `toPrice` coercion below. */
 export interface PriceDataEntry {
   meal_plan?: string;
   currency?: string;
-  adult2?: number;
-  adult4?: number;
-  adult6?: number;
-  adult8?: number;
-  adult10?: number;
-  adult12?: number;
-  sgl_room_price?: number;
-  dbl_room_price?: number;
-  tpl_room_price?: number;
+  sgl_room_price?: number | string;
+  dbl_room_price?: number | string;
+  tpl_room_price?: number | string;
   [key: string]: unknown;
 }
 
@@ -41,7 +37,11 @@ export interface PerPersonQuote {
   isStartingPriceFallback: boolean;
 }
 
-const ADULT_SIZES = [2, 4, 6, 8, 10, 12] as const;
+// The spec named even sizes only, but the live matrix carries every
+// integer column adult2..adult12 (odd sizes are usually "0" = not
+// offered, yet adult3/adult5 CAN hold real prices). Scan them all —
+// toPrice() drops the zeros.
+const ADULT_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
 /** Map the trip's meal-plan enum onto the free-text values the price
  *  matrix uses ("Breakfast", "MAP", "Room Only"...). Loose contains-
@@ -64,8 +64,15 @@ function mealPlanMatches(
   }
 }
 
-function usable(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0;
+/**
+ * The live matrix stores every numeric as a STRING ("adult2":"13100")
+ * — coerce before judging usability, and treat 0/"0"/garbage as "not
+ * offered at this size".
+ */
+function toPrice(v: unknown): number | null {
+  const n =
+    typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /** Parse the raw JSONB `price_data` column defensively — the scraper
@@ -105,8 +112,8 @@ export function perPersonPrice(
   let bestDistance = Infinity;
   for (const entry of candidates) {
     for (const n of ADULT_SIZES) {
-      const price = entry[`adult${n}`];
-      if (!usable(price)) continue;
+      const price = toPrice(entry[`adult${n}`]);
+      if (price === null) continue;
       const distance = Math.abs(n - pax);
       const beats =
         distance < bestDistance ||
@@ -139,9 +146,10 @@ export function quoteForParty(
 ): PerPersonQuote | null {
   const matrix = perPersonPrice(priceData, pax, askedMealPlan);
   if (matrix) return matrix;
-  if (usable(startingPrice)) {
+  const starting = toPrice(startingPrice);
+  if (starting !== null) {
     return {
-      price: startingPrice,
+      price: starting,
       basisPax: 2,
       mealPlan: null,
       isStartingPriceFallback: true,
