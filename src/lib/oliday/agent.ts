@@ -54,14 +54,17 @@ const DEBOUNCE_MS = 2500;
 const MAX_BOT_REPLIES = 60;
 
 /** Same missing slot asked this many consecutive turns → the
- *  traveller is stuck; stop bothering them and get a human (§8). */
-const STUCK_TURNS = 3;
+ *  traveller is stuck; stop bothering them and get a human (§8).
+ *  Kept loose (operator preference: the AI carries nearly every
+ *  conversation) — five wasted turns on ONE slot is genuine
+ *  stuckness, not a wrinkle. */
+const STUCK_TURNS = 5;
 
 const HANDOFF_LINE =
   "Let me get our trip specialist on this — they'll message you right here shortly.";
 
 const MEDIA_ACK =
-  "Thanks for sharing! I can't view attachments here just yet, so let me get our trip specialist to take a look — they'll message you right here shortly.";
+  "Thanks for sharing! I can't open attachments here just yet — our team will take a look. Meanwhile, tell me a bit more in text and I'll keep planning your trip right here.";
 
 export interface OlidayInbound {
   contentType: string;
@@ -110,13 +113,16 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
         }[])
       : [];
 
-    // ---- Non-text inbound: acknowledge + hand off (§7) ---------
+    // ---- Non-text inbound: acknowledge, stay on the case -------
+    // Deliberately NO handoff (operator preference: the bot carries
+    // the conversation). The attachment sits in the inbox for any
+    // human to glance at; the bot keeps working the text thread.
     if (
       inbound.contentType !== 'text' &&
       inbound.contentType !== 'interactive'
     ) {
+      if (!(await claimSlot(db, conversationId))) return;
       await sendPlain(args, MEDIA_ACK);
-      await handoff(args, trip);
       return;
     }
 
@@ -424,7 +430,10 @@ async function generateTurn(input: {
     timeoutMs: aiRequestTimeoutMs(),
     tools,
     maxToolRounds: 4,
-    temperature: 0.6,
+    // Low temperature on purpose: the same ask should produce the
+    // same behaviour (same slot question, same card format, reliable
+    // JSON) — sales-bot consistency beats creative variety.
+    temperature: 0.3,
   });
 
   return { parsed: parseAgentJson(text), usage, searchShown };
