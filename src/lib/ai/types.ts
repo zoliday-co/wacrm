@@ -8,6 +8,18 @@
 
 export type AiProvider = 'openai' | 'anthropic' | 'gemini'
 
+export const AI_PROVIDERS: readonly AiProvider[] = [
+  'openai',
+  'anthropic',
+  'gemini',
+]
+
+/** Single source of truth for provider validation — the config and
+ *  test routes both use this, so adding a provider can't miss one. */
+export function isAiProvider(v: unknown): v is AiProvider {
+  return typeof v === 'string' && (AI_PROVIDERS as string[]).includes(v)
+}
+
 /**
  * Account AI setup, decrypted and ready to use. Produced by
  * `loadAiConfig` — `apiKey` is the plaintext BYO provider key
