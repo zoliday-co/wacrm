@@ -39,6 +39,7 @@ import { buildOlidayPrompt } from './prompt';
 import { parseDealLink, tripFromDealLink } from './entry';
 import {
   mergeTrip,
+  mergeStage,
   fallbackQuestion,
   deterministicExtract,
   type Trip,
@@ -79,6 +80,17 @@ interface AgentJson {
   extractedFields?: unknown;
   response?: string;
   options?: unknown;
+  /** Stage 2: the package they picked from the shown list. */
+  selectedPackage?: unknown;
+  /** Stage 2 done: confirmed the picked package after its detail. */
+  packageConfirmed?: boolean;
+  /** Stage 3 done: confirmed the booking recap card + number. */
+  bookingRequestConfirmed?: boolean;
+  /** Advisory flag for the team (logged only — the bot NEVER pauses
+   *  itself or assigns; humans take over manually from the inbox). */
+  needsSpecialist?: boolean;
+  /** False when the message is unrelated to trip planning. */
+  isRelevant?: boolean;
   /** Legacy field older prompts taught — ignored: the bot never hands
    *  off on its own. */
   handoff?: boolean;
@@ -151,10 +163,11 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     const messages = await buildContext(db, conversationId);
     if (messages.length === 0) return;
 
-    // ---- Ad attribution for the opening line -------------------
+    // ---- Ad attribution + the traveller's number ---------------
+    // The phone feeds the Stage 3 recap card (shown back, never asked).
     const { data: contactRow } = await db
       .from('contacts')
-      .select('referral')
+      .select('referral, phone')
       .eq('id', contactId)
       .maybeSingle();
     const adHeadline =
@@ -162,6 +175,10 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       typeof (contactRow.referral as Record<string, unknown>).headline ===
         'string'
         ? ((contactRow.referral as Record<string, unknown>).headline as string)
+        : null;
+    const phone =
+      typeof contactRow?.phone === 'string' && contactRow.phone.trim()
+        ? contactRow.phone.trim()
         : null;
 
     // ---- The LLM turn (one retry, then deterministic fallback) --
@@ -182,6 +199,7 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
           trip,
           entryContext: (conv?.entry_context as string | null) ?? null,
           adHeadline,
+          phone,
           shownPackages,
           messages,
         });
@@ -207,8 +225,18 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       return;
     }
 
-    // ---- Merge extraction --------------------------------------
+    // ---- Merge extraction + stage progress ---------------------
     trip = mergeTrip(trip, result.parsed.extractedFields);
+    trip = mergeStage(trip, result.parsed);
+
+    // Advisory only — surfaces in the logs for the team; the bot never
+    // pauses itself or assigns anyone (manual takeover from the inbox).
+    if (result.parsed.needsSpecialist === true) {
+      console.log(
+        `[oliday] specialist flagged on conversation ${conversationId}` +
+          (trip.bookingRequestConfirmed ? ' (booking request confirmed)' : '')
+      );
+    }
 
     void logAiUsage(db, {
       accountId,
@@ -262,6 +290,7 @@ async function generateTurn(input: {
   trip: Trip;
   entryContext: string | null;
   adHeadline: string | null;
+  phone: string | null;
   shownPackages: {
     promo_id: string | number;
     h_id: string | number;
@@ -277,8 +306,15 @@ async function generateTurn(input: {
     name: string;
   }[];
 }> {
-  const { config, trip, entryContext, adHeadline, shownPackages, messages } =
-    input;
+  const {
+    config,
+    trip,
+    entryContext,
+    adHeadline,
+    phone,
+    shownPackages,
+    messages,
+  } = input;
 
   const searchShown: {
     promo_id: string | number;
@@ -384,6 +420,7 @@ async function generateTurn(input: {
     today: new Date().toISOString().slice(0, 10),
     entryContext,
     adHeadline,
+    phone,
     shownPackages,
   });
 

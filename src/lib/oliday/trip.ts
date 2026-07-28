@@ -38,8 +38,17 @@ export interface Trip {
   mealPlan?: MealPlan;
   vehicleType?: VehicleType;
   starCategory?: 3 | 4 | 5;
-  /** Internal: consecutive turns stuck asking for the same slot —
-   *  drives the "stuck 3 turns → human" escalation. Not a slot. */
+  /** A different callback number the traveller gave for the booking
+   *  recap (their WhatsApp number is known implicitly). */
+  altPhone?: string;
+  /** Stage 2 progress: the package they picked from the shown list. */
+  selectedPackage?: { promoId: string; hId: string; name: string };
+  /** Stage 2 done: they confirmed the selected package after detail. */
+  packageConfirmed?: boolean;
+  /** Stage 3 done: they confirmed the booking recap card + number. */
+  bookingRequestConfirmed?: boolean;
+  /** Legacy bookkeeping from the removed stuck-slot escalation; may
+   *  still exist on old rows. Never shown to the model. */
   _stuck?: { slot: string; count: number };
 }
 
@@ -132,6 +141,13 @@ export function mergeTrip(current: Trip, extracted: unknown): Trip {
   }
   const star = asInt(e.starCategory, 3, 5);
   if (star === 3 || star === 4 || star === 5) next.starCategory = star;
+  // Alternate callback number for the booking recap — keep only
+  // phone-shaped input (digits with optional +, separators allowed).
+  if (typeof e.altPhone === 'string') {
+    const cleaned = e.altPhone.replace(/[^\d+]/g, '');
+    const digits = cleaned.replace(/\D/g, '');
+    if (digits.length >= 7 && digits.length <= 15) next.altPhone = cleaned;
+  }
 
   // Derive check-out from check-in + nights when the traveller gave
   // only one of the pair.
@@ -148,6 +164,62 @@ export function mergeTrip(current: Trip, extracted: unknown): Trip {
     const b = new Date(`${next.checkOutDate}T00:00:00Z`).getTime();
     const diff = Math.round((b - a) / 86_400_000);
     if (diff >= 1 && diff <= 30) next.nights = diff;
+  }
+
+  return next;
+}
+
+/**
+ * Merge the model's stage progress (Stage 2/3 of the prompt) into the
+ * trip — same untrusted-output discipline as `mergeTrip`. Booleans are
+ * sticky once true (a later turn can't silently unwind a confirmed
+ * stage; the traveller changing their pick DOES replace
+ * `selectedPackage` and clears the confirms so the flow re-runs).
+ */
+export function mergeStage(
+  current: Trip,
+  parsed: {
+    selectedPackage?: unknown;
+    packageConfirmed?: unknown;
+    bookingRequestConfirmed?: unknown;
+  }
+): Trip {
+  const next: Trip = { ...current };
+
+  const sp = parsed.selectedPackage;
+  if (sp && typeof sp === 'object') {
+    const p = sp as Record<string, unknown>;
+    // Accept both the contract's camelCase and the shown-list's
+    // snake_case ids — the model sees the latter in its context.
+    const promoId = p.promoId ?? p.promo_id;
+    const hId = p.hId ?? p.h_id;
+    if (
+      (typeof promoId === 'string' || typeof promoId === 'number') &&
+      (typeof hId === 'string' || typeof hId === 'number')
+    ) {
+      const picked = {
+        promoId: String(promoId),
+        hId: String(hId),
+        name: typeof p.name === 'string' ? p.name.slice(0, 120) : '',
+      };
+      if (
+        next.selectedPackage &&
+        (next.selectedPackage.promoId !== picked.promoId ||
+          next.selectedPackage.hId !== picked.hId)
+      ) {
+        // They changed their mind — earlier confirmations are void.
+        next.packageConfirmed = undefined;
+        next.bookingRequestConfirmed = undefined;
+      }
+      next.selectedPackage = picked;
+    }
+  }
+
+  if (parsed.packageConfirmed === true && next.selectedPackage) {
+    next.packageConfirmed = true;
+  }
+  if (parsed.bookingRequestConfirmed === true && next.packageConfirmed) {
+    next.bookingRequestConfirmed = true;
   }
 
   return next;
