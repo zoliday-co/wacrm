@@ -19,9 +19,10 @@ export const AI_PROVIDER_DEFAULT_MODEL: Record<AiProvider, string> = {
 }
 
 /**
- * Sentinel the model is instructed to emit (in auto-reply mode) when it
- * can't confidently help and a human should take over. Parsed and
- * stripped by `generateReply`.
+ * Legacy sentinel — the prompt no longer teaches it (automatic handoff
+ * is disabled; humans take over only manually from the inbox), but
+ * `generateReply` still parses and strips it defensively so it can
+ * never leak into a customer-facing message.
  */
 export const HANDOFF_SENTINEL = '[[HANDOFF]]'
 
@@ -49,8 +50,9 @@ export function aiContextMessageLimit(): number {
  * Build the system prompt shared by draft + auto-reply. The account's
  * own `system_prompt` (business context / persona / tone) is appended
  * to a fixed scaffold so behaviour stays predictable regardless of what
- * the user typed. Auto-reply mode additionally teaches the handoff
- * protocol.
+ * the user typed. Auto-reply mode additionally teaches the no-human-in-
+ * the-loop guardrails (never guess, never promise a transfer — a human
+ * joins only by taking over manually from the inbox).
  */
 export function buildSystemPrompt(args: {
   userPrompt: string | null
@@ -71,7 +73,7 @@ export function buildSystemPrompt(args: {
 
   if (mode === 'auto_reply') {
     parts.push(
-      `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
+      'You are replying automatically. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — do not guess: acknowledge them warmly and say the team will follow up right here in this chat, while still answering whatever parts you safely can. The team reads this inbox and will step in themselves; never promise a transfer, and never go silent.',
     )
   }
 
@@ -82,7 +84,7 @@ export function buildSystemPrompt(args: {
   if (knowledge && knowledge.length > 0) {
     const fallback =
       mode === 'auto_reply'
-        ? `if they don't cover the question, do not guess — reply with exactly ${HANDOFF_SENTINEL} so a human can help`
+        ? "if they don't cover the question, do not guess — say the team will confirm and follow up in this chat"
         : "if they don't cover the question, don't guess — say you'll check and follow up"
     parts.push(
       'Knowledge base — excerpts from the business\'s own documentation, retrieved for this question. ' +

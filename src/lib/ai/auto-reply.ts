@@ -4,7 +4,6 @@ import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
-import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
@@ -40,7 +39,7 @@ interface DispatchArgs {
  * Eligibility gates (any → silent no-op):
  *   - AI off / auto-reply disabled for the account
  *   - a human agent is assigned (they own the thread)
- *   - auto-reply was disabled for this conversation (prior handoff)
+ *   - auto-reply was disabled for this conversation (manual takeover)
  *   - the per-conversation reply cap is reached
  *   - there's nothing to reply to
  *
@@ -83,7 +82,7 @@ export async function dispatchInboundToAiReply(
       .maybeSingle()
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
-    if (conv.ai_autoreply_disabled) return // handed off / turned off here
+    if (conv.ai_autoreply_disabled) return // manually turned off here
 
     // Oliday agent branch: when the deployment enables the bot and
     // the account runs Gemini, the trip-qualification agent owns the
@@ -109,8 +108,6 @@ export async function dispatchInboundToAiReply(
         configOwnerUserId,
         config,
         inbound: args.inbound,
-        replyCount: conv.ai_reply_count ?? 0,
-        assignedAgentId: conv.assigned_agent_id ?? null,
       })
       return
     }
@@ -185,27 +182,11 @@ export async function dispatchInboundToAiReply(
     })
 
     if (handoff || !text) {
-      // The model can't (or shouldn't) answer — stop auto-replying on
-      // this thread and hand it to a human. We (a) pause the bot here
-      // (sticky until re-enabled), (b) route the conversation to the
-      // configured handoff agent — null leaves it in the shared queue —
-      // and (c) leave a short internal note so whoever picks it up has
-      // context. Assigning fires the `on_conversation_assigned` trigger,
-      // which notifies the agent.
-      const summary = buildHandoffSummary({
-        messages,
-        replyCount: conv.ai_reply_count ?? 0,
-      })
-      const update: Record<string, unknown> = {
-        ai_autoreply_disabled: true,
-        ai_handoff_summary: summary,
-      }
-      // Only set the assignee when a target is configured AND the thread
-      // isn't already owned — never stomp an existing human assignment.
-      if (config.handoffAgentId && !conv.assigned_agent_id) {
-        update.assigned_agent_id = config.handoffAgentId
-      }
-      await db.from('conversations').update(update).eq('id', conversationId)
+      // Nothing safe to send this turn (the model bailed or returned
+      // empty). Automatic handoff is disabled — a human takes over only
+      // via the inbox "Take over" action — so leave the thread exactly
+      // as it is: the bot stays active for the next inbound and the
+      // customer's message sits in the shared inbox for any agent.
       return
     }
 

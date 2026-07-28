@@ -186,27 +186,22 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
   })
 })
 
-describe('dispatchInboundToAiReply — handoff', () => {
-  it('disables auto-reply, writes a summary, and does not send on handoff', async () => {
+describe('dispatchInboundToAiReply — model bails (automatic handoff disabled)', () => {
+  it('sends nothing and leaves the conversation untouched on a bail', async () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).not.toHaveBeenCalled()
     expect(h.state.rpcCalls).toHaveLength(0)
-    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
-    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
-      'AI agent handed off',
-    )
-    // No handoff target configured → conversation left unassigned.
-    expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+    // No self-pause, no assignment, no note — a human takes over only
+    // manually from the inbox.
+    expect(h.state.updatePayload).toBeNull()
   })
 
-  it('routes to the configured handoff agent on handoff', async () => {
+  it('ignores a configured handoff agent — no automatic assignment', async () => {
     h.loadAiConfig.mockResolvedValue(aiConfig({ handoffAgentId: 'agent-7' }))
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
-    expect(h.state.updatePayload).toMatchObject({
-      ai_autoreply_disabled: true,
-      assigned_agent_id: 'agent-7',
-    })
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toBeNull()
   })
 })

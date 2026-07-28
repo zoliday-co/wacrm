@@ -4,13 +4,16 @@
 //
 // Owns everything the generic auto-reply doesn't:
 //   - debounce (rapid-fire messages collapse into one turn)
-//   - non-text inbound → graceful ack + human handoff
+//   - non-text inbound → graceful ack (the bot stays on the case)
 //   - trip-slot state on `conversations.trip` (source of truth)
 //   - the Gemini function-calling loop over search_packages /
 //     get_package (retrieval-grounded — §7)
 //   - interactive quick replies (buttons ≤3, list 4–10)
-//   - stuck-slot + LLM-failure escalation, deterministic fallback
-//     (the bot never goes silent on an inbound)
+//   - deterministic fallback on LLM failure (the bot never goes
+//     silent on an inbound)
+//
+// The bot NEVER hands off on its own — no self-pause, no auto-assign.
+// A human takes over only manually via the inbox "Take over" action.
 //
 // Contract with the caller: NEVER throws — a failing turn must not
 // affect the webhook's 200 to Meta.
@@ -20,7 +23,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AiConfig, ChatMessage } from '@/lib/ai/types';
 import { AiError } from '@/lib/ai/types';
 import { aiRequestTimeoutMs } from '@/lib/ai/defaults';
-import { buildHandoffSummary } from '@/lib/ai/handoff';
 import { logAiUsage } from '@/lib/ai/usage';
 import {
   generateGeminiToolLoop,
@@ -37,7 +39,6 @@ import { buildOlidayPrompt } from './prompt';
 import { parseDealLink, tripFromDealLink } from './entry';
 import {
   mergeTrip,
-  nextMissingSlot,
   fallbackQuestion,
   deterministicExtract,
   type Trip,
@@ -48,20 +49,11 @@ import {
  *  only the invocation holding the newest message proceeds. */
 const DEBOUNCE_MS = 2500;
 
-/** Bot replies per conversation before it stops and a human takes
- *  over — a booking chat runs long, so this is far above the generic
- *  auto-reply cap but still a hard ceiling on runaway loops. */
+/** Bot replies per conversation before it goes quiet — a booking chat
+ *  runs long, so this is far above the generic auto-reply cap but
+ *  still a hard ceiling on runaway loops. Once hit, the thread simply
+ *  waits in the inbox; "Resume AI" resets the budget. */
 const MAX_BOT_REPLIES = 60;
-
-/** Same missing slot asked this many consecutive turns → the
- *  traveller is stuck; stop bothering them and get a human (§8).
- *  Kept loose (operator preference: the AI carries nearly every
- *  conversation) — five wasted turns on ONE slot is genuine
- *  stuckness, not a wrinkle. */
-const STUCK_TURNS = 5;
-
-const HANDOFF_LINE =
-  "Let me get our trip specialist on this — they'll message you right here shortly.";
 
 const MEDIA_ACK =
   "Thanks for sharing! I can't open attachments here just yet — our team will take a look. Meanwhile, tell me a bit more in text and I'll keep planning your trip right here.";
@@ -81,16 +73,14 @@ export interface OlidayTurnArgs {
   configOwnerUserId: string;
   config: AiConfig;
   inbound: OlidayInbound;
-  /** Bot replies already sent on this thread (drives the handoff note). */
-  replyCount: number;
-  /** Pre-existing assignee — never stomped on handoff. */
-  assignedAgentId: string | null;
 }
 
 interface AgentJson {
   extractedFields?: unknown;
   response?: string;
   options?: unknown;
+  /** Legacy field older prompts taught — ignored: the bot never hands
+   *  off on its own. */
   handoff?: boolean;
 }
 
@@ -175,7 +165,6 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
         : null;
 
     // ---- The LLM turn (one retry, then deterministic fallback) --
-    const slotBefore = nextMissingSlot(trip);
     let result: {
       parsed: AgentJson;
       usage: Parameters<typeof logAiUsage>[1]['usage'];
@@ -209,18 +198,8 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       // First consume the traveller's answer deterministically (their
       // typed text or the fallback question's own button label), so
       // the loop PROGRESSES through the slots instead of re-asking
-      // the same one until the stuck counter escalates.
+      // the same one.
       trip = mergeTrip(trip, deterministicExtract(inbound.text));
-      const slotNow = nextMissingSlot(trip);
-      trip =
-        slotNow !== null && slotNow === slotBefore
-          ? bumpStuck(trip, slotNow)
-          : { ...trip, _stuck: undefined };
-      if ((trip._stuck?.count ?? 0) >= STUCK_TURNS) {
-        await sendPlain(args, HANDOFF_LINE);
-        await handoff(args, trip);
-        return;
-      }
       await persistTrip(db, conversationId, trip, null);
       const q = fallbackQuestion(trip);
       if (!(await claimSlot(db, conversationId))) return;
@@ -228,15 +207,8 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       return;
     }
 
-    // ---- Merge extraction, detect stuck ------------------------
+    // ---- Merge extraction --------------------------------------
     trip = mergeTrip(trip, result.parsed.extractedFields);
-    const slotAfter = nextMissingSlot(trip);
-    // Stuck = the model asked, the reply came, and the SAME slot is
-    // still missing. Only counts turns where nothing was learned.
-    trip =
-      slotAfter !== null && slotAfter === slotBefore
-        ? bumpStuck(trip, slotAfter)
-        : { ...trip, _stuck: undefined };
 
     void logAiUsage(db, {
       accountId,
@@ -247,8 +219,6 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       usage: result.usage,
     });
 
-    const stuck = (trip._stuck?.count ?? 0) >= STUCK_TURNS;
-    const wantsHandoff = result.parsed.handoff === true || stuck;
     const responseText =
       typeof result.parsed.response === 'string'
         ? result.parsed.response.trim()
@@ -261,11 +231,6 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       result.searchShown.length > 0 ? result.searchShown : null
     );
 
-    if (wantsHandoff) {
-      await sendPlain(args, responseText || HANDOFF_LINE);
-      await handoff(args, trip);
-      return;
-    }
     if (!responseText) {
       // Model returned JSON with no message — treat as a soft failure
       // rather than sending an empty bubble.
@@ -570,7 +535,7 @@ async function sendWithOptions(
 }
 
 // ------------------------------------------------------------
-// State + escalation plumbing
+// State plumbing
 // ------------------------------------------------------------
 
 async function persistTrip(
@@ -608,43 +573,6 @@ async function claimSlot(
     return false;
   }
   return data === true;
-}
-
-/** Mirror of the generic auto-reply handoff: pause the bot on this
- *  thread (sticky), route to the configured agent (never stomping an
- *  existing assignee), leave the internal note. Assignment fires the
- *  `on_conversation_assigned` notification to the team. */
-async function handoff(args: OlidayTurnArgs, trip: Trip): Promise<void> {
-  const { db, conversationId, config } = args;
-  const messages = await buildContext(db, conversationId, 10);
-  const update: Record<string, unknown> = {
-    ai_autoreply_disabled: true,
-    ai_handoff_summary: buildHandoffSummary({
-      messages,
-      replyCount: args.replyCount,
-    }),
-    trip,
-  };
-  if (config.handoffAgentId && !args.assignedAgentId) {
-    update.assigned_agent_id = config.handoffAgentId;
-  }
-  const { error } = await db
-    .from('conversations')
-    .update(update)
-    .eq('id', conversationId);
-  if (error) console.error('[oliday] handoff update failed:', error.message);
-}
-
-function bumpStuck(trip: Trip, slot: string | null): Trip {
-  if (slot === null) return { ...trip, _stuck: undefined };
-  const prev = trip._stuck;
-  return {
-    ...trip,
-    _stuck:
-      prev && prev.slot === slot
-        ? { slot, count: prev.count + 1 }
-        : { slot, count: 1 },
-  };
 }
 
 function truncate(s: string, max: number): string {
