@@ -27,6 +27,7 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  Trash2,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -38,6 +39,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./message-bubble";
 import { MessageActions } from "./message-actions";
@@ -109,6 +119,13 @@ interface MessageThreadProps {
    */
   contactPanelOpen?: boolean;
   onToggleContactPanel?: () => void;
+  /**
+   * Fired after the conversation (and, via DB cascade, all its
+   * messages) has been deleted. The parent removes it from the list
+   * and deselects it. Optional so existing callers keep working; the
+   * delete button only renders when this is provided.
+   */
+  onDeleted?: (conversationId: string) => void;
 }
 
 function formatDateSeparator(dateStr: string, t: ReturnType<typeof useTranslations>): string {
@@ -167,6 +184,7 @@ export function MessageThread({
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
+  onDeleted,
 }: MessageThreadProps) {
   const t = useTranslations("Inbox.messageThread");
   const tTimer = useTranslations("Inbox.sessionTimer");
@@ -202,6 +220,10 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+  // Delete-conversation confirm dialog. Deleting is irreversible (the
+  // DB cascades away every message), so it always goes through this.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Profiles are bounded by RLS to rows the current user is allowed to
   // see — today that's just the current user, but the dropdown keeps the
@@ -838,6 +860,30 @@ export function MessageThread({
     [conversation, onAssignChange],
   );
 
+  const handleDeleteConversation = useCallback(async () => {
+    if (!conversation || deleting) return;
+    setDeleting(true);
+
+    // RLS scopes this to the caller's account (agent+); messages,
+    // message_actions and notifications cascade away in the DB.
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("conversations")
+      .delete()
+      .eq("id", conversation.id);
+
+    setDeleting(false);
+    if (error) {
+      console.error("Failed to delete conversation:", error);
+      toast.error(t("deleteConversationFailed"));
+      return;
+    }
+
+    setDeleteOpen(false);
+    toast.success(t("conversationDeleted"));
+    onDeleted?.(conversation.id);
+  }, [conversation, deleting, onDeleted, t]);
+
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
   // pattern under the user's eye.
@@ -1054,8 +1100,51 @@ export function MessageThread({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* Delete conversation — always behind the confirm dialog
+              below (irreversible: every message cascades away). Only
+              rendered when the parent wires up `onDeleted`. */}
+          {onDeleted && (
+            <button
+              type="button"
+              onClick={() => setDeleteOpen(true)}
+              aria-label={t("deleteConversation")}
+              title={t("deleteConversation")}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Delete-conversation confirm dialog */}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent className="border-border bg-card sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("deleteConversationTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("deleteConversationWarning", { name: displayName })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleting}
+            >
+              {t("cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteConversation}
+              disabled={deleting}
+            >
+              {deleting ? t("deleting") : t("deleteConversation")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">

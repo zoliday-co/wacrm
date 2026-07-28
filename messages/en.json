@@ -166,7 +166,14 @@
       "selectConversation": "Select a conversation",
       "selectConversationHint": "Choose a conversation from the left to start messaging",
       "today": "Today",
-      "yesterday": "Yesterday"
+      "yesterday": "Yesterday",
+      "deleteConversation": "Delete conversation",
+      "deleteConversationTitle": "Delete this conversation?",
+      "deleteConversationWarning": "This permanently deletes the conversation with {name} and all of its messages. This cannot be undone.",
+      "cancel": "Cancel",
+      "deleting": "Deleting…",
+      "conversationDeleted": "Conversation deleted",
+      "deleteConversationFailed": "Failed to delete conversation"
     },
     "sessionTimer": {
       "expired": "Expired",

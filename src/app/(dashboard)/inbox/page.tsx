@@ -501,6 +501,19 @@ function InboxPageInner() {
     router.replace("/inbox", { scroll: false });
   }, [router]);
 
+  // The thread deleted its conversation (confirmed, row already gone):
+  // drop it from the list and deselect it so the empty state / list
+  // pane takes over.
+  const handleConversationDeleted = useCallback(
+    (conversationId: string) => {
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+      if (activeConversation?.id === conversationId) {
+        handleCloseConversation();
+      }
+    },
+    [activeConversation, handleCloseConversation],
+  );
+
 
   const handleMessagesLoaded = useCallback((loaded: Message[]) => {
     setMessages(loaded);
@@ -623,6 +636,7 @@ function InboxPageInner() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            onDeleted={handleConversationDeleted}
           />
         </div>
 
