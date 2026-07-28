@@ -270,11 +270,26 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
 
     // ---- Send, with quick replies where provided ---------------
     if (!(await claimSlot(db, conversationId))) return;
-    const options = Array.isArray(result.parsed.options)
+    let options = Array.isArray(result.parsed.options)
       ? result.parsed.options
           .filter((o): o is string => typeof o === 'string' && o.trim() !== '')
           .slice(0, 10)
       : [];
+    // Deterministic backstop: a turn that just showed packages always
+    // ends with "pick one", so it must always carry tap choices — the
+    // model sometimes sends [] when catalog names repeat ("Andaman 4N"
+    // × 4) and it can't form distinct labels. Package names when they
+    // are unique, "Option N" (matching card order, resolvable against
+    // PACKAGES ALREADY SHOWN next turn) when they are not.
+    if (options.length === 0 && result.searchShown.length > 0) {
+      const shown = result.searchShown.slice(0, 10);
+      const names = shown.map((p) => truncate(p.name, 20));
+      const unique = new Set(names.map((n) => n.toLowerCase()));
+      options =
+        unique.size === names.length
+          ? names
+          : shown.map((_, i) => `Option ${i + 1}`);
+    }
     await sendWithOptions(args, responseText, options);
   } catch (err) {
     console.error('[oliday] turn failed:', err);
