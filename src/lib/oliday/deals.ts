@@ -24,6 +24,16 @@ function siteUrl(): string {
   );
 }
 
+/** Public package page — exists for EVERY catalog package (the site
+ *  renders it straight from the catalog), so this is the fallback
+ *  link when no curated deal page mirrors the package. */
+export function packageUrl(
+  promoId: string | number,
+  hId: string | number
+): string {
+  return `${siteUrl()}/package/${promoId}-${hId}`;
+}
+
 /** Map key — promo/h ids are strings in Firestore and numbers-or-
  *  strings in the catalog, so both sides normalize through here. */
 export function dealKey(

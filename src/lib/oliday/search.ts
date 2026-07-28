@@ -10,7 +10,7 @@
 // ============================================================
 
 import { catalogClient } from './catalog-client';
-import { dealLinks, dealKey } from './deals';
+import { dealLinks, dealKey, packageUrl } from './deals';
 import { resolveRegion, containsWholeWords } from './regions';
 import { quoteForParty, type PerPersonQuote } from './pricing';
 import {
@@ -51,9 +51,10 @@ export interface PackageCard {
   currency: string;
   travel_from: string | null;
   travel_to: string | null;
-  /** Public oliday.app deal-page link, when the site has a published
-   *  deal mirroring this exact package. Null for most packages. */
-  deal_url: string | null;
+  /** Public oliday.app link for this package: the curated deal page
+   *  when one mirrors it, else the generic /package/<promo>-<h> page
+   *  (which exists for every catalog package). */
+  deal_url: string;
 }
 
 export interface SearchResult {
@@ -184,12 +185,15 @@ export async function searchPackages(
     if (capped.length > 0) top = capped;
   }
 
-  // Attach public deal-page links where the site has one (best-effort
-  // — an empty map on fetch failure just means link-less cards).
+  // Every card gets a public site link: the curated deal page when one
+  // mirrors this package, else the generic package page (a failed
+  // deals fetch just means everything falls back to package pages).
   const links = await dealLinks();
   const packages = top.slice(0, RESULT_LIMIT).map((c) => ({
     ...c,
-    deal_url: links.get(dealKey(c.promo_id, c.h_id)) ?? null,
+    deal_url:
+      links.get(dealKey(c.promo_id, c.h_id)) ??
+      packageUrl(c.promo_id, c.h_id),
   }));
 
   return {
@@ -288,6 +292,8 @@ function toCard(row: PoolRow, pax: number, mealPlan?: MealPlan): PackageCard {
     currency: row.currency ?? 'INR',
     travel_from: row.travel_from,
     travel_to: row.travel_to,
-    deal_url: null, // filled from the published-deals map by the caller
+    // Fallback link; the caller upgrades it to the curated deal page
+    // when one mirrors this package.
+    deal_url: packageUrl(row.promo_id, row.h_id),
   };
 }
