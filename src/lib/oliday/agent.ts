@@ -2,9 +2,15 @@
 // The Oliday agent turn — invoked from `dispatchInboundToAiReply`
 // when the bot is enabled and the account runs provider='gemini'.
 //
-// Owns everything the generic auto-reply doesn't:
-//   - debounce (rapid-fire messages collapse into one turn)
-//   - non-text inbound → graceful ack (the bot stays on the case)
+// This file is also the ORCHESTRATION LAYER: after the shared
+// plumbing (media ack, debounce), each inbound routes to one of two
+// agents — the Vibes agent (`vibes-agent.ts`) when the conversation
+// entered through a Vibes surface (the `(vibes:<tripId>)` tag or the
+// generic Vibes prefill; sticky via `conversations.vibes`), else the
+// packages agent below. A mid-chat packages ask inside a Vibes chat
+// hands the same inbound back to the packages agent.
+//
+// The packages agent owns:
 //   - trip-slot state on `conversations.trip` (source of truth)
 //   - the Gemini function-calling loop over search_packages /
 //     get_package (retrieval-grounded — §7)
@@ -29,10 +35,17 @@ import {
   type GeminiTool,
 } from '@/lib/ai/providers/gemini';
 import {
-  engineSendText,
-  engineSendInteractiveButtons,
-  engineSendInteractiveList,
-} from '@/lib/flows/meta-send';
+  buildContext,
+  claimSlot,
+  parseAgentJson,
+  sendPlain,
+  sendWithOptions,
+  sleep,
+  truncate,
+  type OlidayTurnArgs,
+} from './shared';
+import { runVibesTurn } from './vibes-agent';
+import { routeInbound, type VibesState } from './vibes';
 import { searchPackages } from './search';
 import { getPackage } from './package';
 import { buildOlidayPrompt } from './prompt';
@@ -45,36 +58,18 @@ import {
   type Trip,
 } from './trip';
 
+// Re-exported so callers (webhook dispatch, tests) keep one import
+// point for the agent surface.
+export type { OlidayInbound, OlidayTurnArgs } from './shared';
+export { parseAgentJson } from './shared';
+
 /** Rapid-fire messages ("Kashmir" / "5 nights" / "2 of us" in three
  *  bubbles) collapse into one turn: wait for this much silence, then
  *  only the invocation holding the newest message proceeds. */
 const DEBOUNCE_MS = 2500;
 
-/** Bot replies per conversation before it goes quiet — a booking chat
- *  runs long, so this is far above the generic auto-reply cap but
- *  still a hard ceiling on runaway loops. Once hit, the thread simply
- *  waits in the inbox; "Resume AI" resets the budget. */
-const MAX_BOT_REPLIES = 60;
-
 const MEDIA_ACK =
   "Thanks for sharing! I can't open attachments here just yet — our team will take a look. Meanwhile, tell me a bit more in text and I'll keep planning your trip right here.";
-
-export interface OlidayInbound {
-  contentType: string;
-  text: string;
-  interactiveReplyId: string | null;
-  wamid: string;
-}
-
-export interface OlidayTurnArgs {
-  db: SupabaseClient;
-  accountId: string;
-  conversationId: string;
-  contactId: string;
-  configOwnerUserId: string;
-  config: AiConfig;
-  inbound: OlidayInbound;
-}
 
 interface AgentJson {
   extractedFields?: unknown;
@@ -103,7 +98,7 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     // ---- Load bot state ----------------------------------------
     const { data: conv } = await db
       .from('conversations')
-      .select('trip, shown_packages, entry_context')
+      .select('trip, shown_packages, entry_context, vibes')
       .eq('id', conversationId)
       .maybeSingle();
     let trip: Trip = (conv?.trip as Trip) ?? {};
@@ -145,6 +140,20 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
         // invocation sees the full batch; this one stands down.
         return;
       }
+    }
+
+    // ---- Orchestration: Vibes or packages? ---------------------
+    // Route on the machine tag / known Vibes prefills, sticky via
+    // `conversations.vibes`. A packages/pricing ask inside a Vibes
+    // chat falls through so the packages agent answers this same
+    // inbound (the Vibes agent already sent its one-line bridge).
+    const vibesState = routeInbound(
+      inbound.text,
+      (conv?.vibes as VibesState | null) ?? null
+    );
+    if (vibesState) {
+      const outcome = await runVibesTurn({ ...args, state: vibesState });
+      if (outcome !== 'switch_to_packages') return;
     }
 
     // ---- First-turn prefill from a deal deep link --------------
@@ -453,137 +462,7 @@ async function generateTurn(input: {
     temperature: 0.3,
   });
 
-  return { parsed: parseAgentJson(text), usage, searchShown };
-}
-
-/** Lenient JSON extraction: exact parse → fenced block → first {...}
- *  span → give up and treat the whole text as the reply. The model is
- *  instructed to emit bare JSON, but a mis-formatted turn must
- *  degrade to a sendable message, not a crash. */
-export function parseAgentJson(raw: string): AgentJson {
-  const candidates: string[] = [raw.trim()];
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(raw);
-  if (fenced) candidates.push(fenced[1].trim());
-  const braceStart = raw.indexOf('{');
-  const braceEnd = raw.lastIndexOf('}');
-  if (braceStart !== -1 && braceEnd > braceStart) {
-    candidates.push(raw.slice(braceStart, braceEnd + 1));
-  }
-  for (const c of candidates) {
-    try {
-      const parsed = JSON.parse(c) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as AgentJson;
-      }
-    } catch {
-      // try the next candidate
-    }
-  }
-  return { response: raw.trim() };
-}
-
-// ------------------------------------------------------------
-// Context — includes interactive turns (button/list taps)
-// ------------------------------------------------------------
-
-async function buildContext(
-  db: SupabaseClient,
-  conversationId: string,
-  limit = 30
-): Promise<ChatMessage[]> {
-  const { data } = await db
-    .from('messages')
-    .select('sender_type, content_type, content_text')
-    .eq('conversation_id', conversationId)
-    .in('content_type', ['text', 'interactive'])
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
-  const rows = (
-    (data ?? []) as {
-      sender_type: 'customer' | 'agent' | 'bot';
-      content_type: string;
-      content_text: string | null;
-    }[]
-  ).reverse();
-
-  return rows
-    .filter((m) => m.content_text && m.content_text.trim())
-    .map((m) => ({
-      role:
-        m.sender_type === 'customer'
-          ? ('user' as const)
-          : ('assistant' as const),
-      content: m.content_text!.trim(),
-    }));
-}
-
-// ------------------------------------------------------------
-// Sending
-// ------------------------------------------------------------
-
-async function sendPlain(args: OlidayTurnArgs, text: string): Promise<void> {
-  await engineSendText({
-    accountId: args.accountId,
-    userId: args.configOwnerUserId,
-    conversationId: args.conversationId,
-    contactId: args.contactId,
-    text,
-    aiGenerated: true,
-  });
-}
-
-/** 0 options → text · 1–3 → reply buttons · 4–10 → list message.
- *  Meta caps: button titles 20 chars, list row titles 24. If the
- *  interactive send fails (e.g. a title Meta rejects), fall back to
- *  plain text with numbered options — never lose the turn. */
-async function sendWithOptions(
-  args: OlidayTurnArgs,
-  text: string,
-  options: string[]
-): Promise<void> {
-  const base = {
-    accountId: args.accountId,
-    userId: args.configOwnerUserId,
-    conversationId: args.conversationId,
-    contactId: args.contactId,
-  };
-  try {
-    if (options.length === 0) {
-      await sendPlain(args, text);
-    } else if (options.length <= 3) {
-      await engineSendInteractiveButtons({
-        ...base,
-        bodyText: text,
-        buttons: options.map((o, i) => ({
-          id: `opt_${i}`,
-          title: truncate(o, 20),
-        })),
-      });
-    } else {
-      await engineSendInteractiveList({
-        ...base,
-        bodyText: text,
-        buttonLabel: 'Choose',
-        sections: [
-          {
-            title: 'Options',
-            rows: options.map((o, i) => ({
-              id: `opt_${i}`,
-              title: truncate(o, 24),
-            })),
-          },
-        ],
-      });
-    }
-  } catch (err) {
-    console.error(
-      '[oliday] interactive send failed, falling back to text:',
-      err
-    );
-    const numbered = options.map((o, i) => `${i + 1}. ${o}`).join('\n');
-    await sendPlain(args, numbered ? `${text}\n\n${numbered}` : text);
-  }
+  return { parsed: parseAgentJson<AgentJson>(text), usage, searchShown };
 }
 
 // ------------------------------------------------------------
@@ -609,29 +488,6 @@ async function persistTrip(
   if (error) console.error('[oliday] trip persist failed:', error.message);
 }
 
-/** Atomic per-conversation reply budget — same RPC the generic
- *  auto-reply uses, with the bot-sized cap. Losing the claim means a
- *  concurrent turn just took the last slot; stand down quietly. */
-async function claimSlot(
-  db: SupabaseClient,
-  conversationId: string
-): Promise<boolean> {
-  const { data, error } = await db.rpc('claim_ai_reply_slot', {
-    conversation_id: conversationId,
-    max_replies: MAX_BOT_REPLIES,
-  });
-  if (error) {
-    console.error('[oliday] claim_ai_reply_slot failed:', error);
-    return false;
-  }
-  return data === true;
-}
-
-function truncate(s: string, max: number): string {
-  const t = s.trim();
-  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
-}
-
 function numOrUndef(v: unknown): number | undefined {
   const n = typeof v === 'string' ? Number(v) : v;
   return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
@@ -644,8 +500,4 @@ function enumOrUndef<T extends string>(
   return typeof v === 'string' && (allowed as string[]).includes(v)
     ? (v as T)
     : undefined;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
