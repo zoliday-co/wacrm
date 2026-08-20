@@ -28,7 +28,7 @@ export interface VibeTripPublic {
   hostIsBrand: boolean;
 }
 
-function siteUrl(): string {
+export function siteUrl(): string {
   return (process.env.OLIDAY_SITE_URL ?? 'https://oliday.app').replace(
     /\/+$/,
     ''
