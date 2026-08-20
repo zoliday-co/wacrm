@@ -44,6 +44,7 @@ import {
   truncate,
   type OlidayTurnArgs,
 } from './shared';
+import { matchFeaturedPrefill } from './featured';
 import { runVibesTurn } from './vibes-agent';
 import { routeInbound, type VibesState } from './vibes';
 import { searchPackages } from './search';
@@ -140,6 +141,22 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
         // invocation sees the full batch; this one stands down.
         return;
       }
+    }
+
+    // ---- Featured-event page CTA: canned ack -------------------
+    // The traveller tapped the WhatsApp button ON the event's own
+    // landing page — they just left it, so the LLM path (which would
+    // send the link back) is wrong. One warm deterministic ack; the
+    // team follows up, and any typed follow-up takes the normal LLM
+    // path where the featured-events prompt block handles it.
+    const featuredEvent = matchFeaturedPrefill(inbound.text);
+    if (featuredEvent) {
+      console.log(
+        `[oliday] featured-event lead (${featuredEvent.name}) on conversation ${conversationId} — specialist follow-up`
+      );
+      if (!(await claimSlot(db, conversationId))) return;
+      await sendPlain(args, featuredEvent.ackText);
+      return;
     }
 
     // ---- Orchestration: Vibes or packages? ---------------------

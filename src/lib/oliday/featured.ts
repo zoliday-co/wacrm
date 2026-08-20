@@ -22,6 +22,13 @@ export interface FeaturedEvent {
    *  in, starting price). Kept as one string so the prompt stays a
    *  single bullet per event. */
   facts: string;
+  /** Matches the page's own WhatsApp-CTA prefill — deliberately
+   *  narrow, like the entry-detection regexes in `entry.ts`, so a
+   *  passing mention mid-chat never triggers the canned ack. */
+  prefillRe: RegExp;
+  /** The canned first reply for a lead who arrived FROM the page —
+   *  they just left it, so it never echoes the link back. */
+  ackText: string;
 }
 
 export const FEATURED_EVENTS: FeaturedEvent[] = [
@@ -30,8 +37,18 @@ export const FEATURED_EVENTS: FeaturedEvent[] = [
     urlPath: '/dev-deepawali-2026',
     facts:
       '23–25 Nov 2026 (2N/3D) · all 84 ghats lit with lamps for the "Diwali of the gods" · hotel with breakfast, VIP temple darshan, the grand-illumination boat ride on Dev Deepawali night, Ganga aarti and private AC transfers · early-bird from ₹15,999 per person (incl. GST)',
+    // "Hi Oliday! I'm interested in the Dev Deepawali Varanasi trip
+    // (23–25 Nov 2026)." — spelling (Deepawali/Deepavali) tolerated.
+    prefillRe: /interested in the dev\s*deepa?[wv]ali/i,
+    ackText:
+      'Thanks for showing interest in experiencing the magical evening of lights and fireworks from the boat on Dev Deepawali night 🪔\nSomeone from our team will reach out to you right here shortly.',
   },
 ];
+
+/** The featured event whose page CTA produced this inbound, if any. */
+export function matchFeaturedPrefill(text: string): FeaturedEvent | null {
+  return FEATURED_EVENTS.find((e) => e.prefillRe.test(text)) ?? null;
+}
 
 export function featuredEventLink(event: FeaturedEvent): string {
   return `${siteUrl()}${event.urlPath}`;
@@ -48,8 +65,9 @@ export function featuredEventsSection(rule: string): string {
     rule,
     'FEATURED EVENT TRIPS — landing pages on our site',
     rule,
-    'These limited-time event trips are NOT in the packages catalog and NOT on Vibes — each lives on its own page. When a traveller asks about one (by event name, place or dates), NEVER say we don\'t have it: confirm warmly that we run it, share its page link exactly as written below, and answer only from the facts below.',
+    'These limited-time event trips are NOT in the packages catalog and NOT on Vibes — each lives on its own page. When a traveller brings one up (by event name, place or dates), NEVER say we don\'t have it: confirm warmly that we run it, share its page link exactly as written below, and answer only from the facts below.',
     ...bullets,
-    'The page carries the current prices and room tiers — point them there for anything beyond these facts, and set "needsSpecialist": true when they want to book one (booking happens via the page\'s callback form and our team, right here on WhatsApp).',
+    'BUT if the conversation OPENED with an enquiry about the event, they arrived from that very page — never throw its link back at them. Thank them for their interest, tell them our team will reach out right here shortly, and keep answering questions from the facts above.',
+    'The page carries the current prices and room tiers — for anything beyond these facts say the team will confirm, and set "needsSpecialist": true when they want to book one.',
   ].join('\n');
 }

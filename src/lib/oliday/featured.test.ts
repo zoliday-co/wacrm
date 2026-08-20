@@ -3,6 +3,7 @@ import {
   FEATURED_EVENTS,
   featuredEventLink,
   featuredEventsSection,
+  matchFeaturedPrefill,
 } from './featured';
 import { buildVibesPrompt } from './vibes-prompt';
 import { buildOlidayPrompt } from './prompt';
@@ -25,6 +26,31 @@ describe('featuredEventsSection', () => {
     expect(dev).toBeDefined();
     // siteUrl() honours OLIDAY_SITE_URL, so assert the path, not the host.
     expect(featuredEventLink(dev!)).toMatch(/\/dev-deepawali-2026$/);
+  });
+});
+
+describe('matchFeaturedPrefill — the landing page\'s WhatsApp CTA', () => {
+  it('matches the Dev Deepawali page prefill, spelling variants included', () => {
+    expect(
+      matchFeaturedPrefill(
+        "Hi Oliday! I'm interested in the Dev Deepawali Varanasi trip (23–25 Nov 2026)."
+      )?.name
+    ).toContain('Dev Deepawali 2026');
+    expect(
+      matchFeaturedPrefill("I'm interested in the Dev Deepavali trip")
+    ).not.toBeNull();
+  });
+
+  it('never fires on a passing mention or a generic ask', () => {
+    expect(matchFeaturedPrefill('do you have dev deepawali trips?')).toBeNull();
+    expect(matchFeaturedPrefill('what about diwali in varanasi')).toBeNull();
+    expect(matchFeaturedPrefill('show me kerala packages')).toBeNull();
+  });
+
+  it('the ack never contains the page link (they just came from it)', () => {
+    for (const e of FEATURED_EVENTS) {
+      expect(e.ackText).not.toContain(e.urlPath);
+    }
   });
 });
 
