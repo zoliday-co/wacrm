@@ -24,18 +24,69 @@ export interface MetaPhoneInfo {
 }
 
 interface MetaErrorResponse {
-  error?: { message?: string; code?: number; type?: string }
+  error?: {
+    message?: string
+    code?: number
+    type?: string
+    error_subcode?: number
+    fbtrace_id?: string
+    error_data?: { details?: string }
+  }
 }
 
+/**
+ * Turn a failed Meta response into an Error that names the cause.
+ *
+ * Meta routinely answers a well-formed request with the useless
+ * "An unknown error has occurred." and puts the actual reason in the
+ * sibling fields — `error_data.details` ("payment method", "WABA is
+ * not active", …) plus `code` / `error_subcode`. Logging only
+ * `error.message` left us staring at that sentence with no way to
+ * tell an account-level block from a bad payload, so every field
+ * carrying signal is appended in brackets:
+ *
+ *   An unknown error has occurred. [code 1/2494010 · HTTP 400 · fbtrace Ax9…]
+ *
+ * The `code NNNNNN` form also keeps isRecipientNotAllowedError's
+ * 131030 match working when Meta leaves the number out of `message`.
+ */
 async function throwMetaError(response: Response, fallback: string): Promise<never> {
   let message = fallback
+  const parts: string[] = []
+  // Read the body ONCE as text so the raw envelope can still be logged
+  // when it is not JSON (Meta's 5xx responses often are not).
+  const rawBody = await response.text().catch(() => '')
   try {
-    const data = (await response.json()) as MetaErrorResponse
-    if (data.error?.message) message = data.error.message
+    const data = JSON.parse(rawBody) as MetaErrorResponse
+    const err = data.error
+    if (err?.message) message = err.message
+    const details = err?.error_data?.details
+    if (details && details !== err.message) parts.push(details)
+    if (err?.code !== undefined) {
+      parts.push(
+        err.error_subcode !== undefined
+          ? `code ${err.code}/${err.error_subcode}`
+          : `code ${err.code}`
+      )
+    }
+    if (err?.type) parts.push(err.type)
+    if (err?.fbtrace_id) parts.push(`fbtrace ${err.fbtrace_id}`)
   } catch {
     // response body wasn't JSON — keep the fallback
   }
-  throw new Error(message)
+  parts.push(`HTTP ${response.status}`)
+
+  // The verbatim envelope, on one greppable line. Meta hides the real
+  // reason for a rejection (account blocks, template state) in fields it
+  // leaves out of `error.message`, so print exactly what came back on
+  // the wire. The URL holds no secret — the token travels in a header.
+  console.error('[meta] WHATSAPP API CALL FAILED:', {
+    url: response.url,
+    status: response.status,
+    body: rawBody.slice(0, 2000),
+  })
+
+  throw new Error(`${message} [${parts.join(' · ')}]`)
 }
 
 // ============================================================

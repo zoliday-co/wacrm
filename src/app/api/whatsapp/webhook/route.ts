@@ -924,6 +924,15 @@ async function processMessage(
   // below); `dispatchInboundToAiReply` owns its eligibility gates +
   // try/catch and never throws.
   if (!flowConsumed) {
+    // Proof-of-life for the inbound leg: if this line is absent from the
+    // deploy's logs, Meta never delivered the webhook. If it is present
+    // and no send follows, the failure is downstream at the Meta send.
+    console.log('[webhook] inbound dispatched to AI reply:', {
+      conversationId: conversation.id,
+      contactId: contactRecord.id,
+      contentType,
+      wamid: message.id,
+    })
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,

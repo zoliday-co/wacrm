@@ -80,13 +80,49 @@ export async function sendPlain(
   args: OlidayTurnArgs,
   text: string
 ): Promise<void> {
-  await engineSendText({
+  try {
+    const { whatsapp_message_id } = await engineSendText({
+      accountId: args.accountId,
+      userId: args.configOwnerUserId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      text,
+      aiGenerated: true,
+    });
+    logSendOk('text', args, whatsapp_message_id);
+  } catch (err) {
+    logSendFailure('text', args, err);
+    throw err;
+  }
+}
+
+/** One greppable line per send, success or failure. `meta-api` already
+ *  prints the raw Meta envelope; these add the CRM-side coordinates so a
+ *  production failure names the conversation it belongs to instead of
+ *  leaving a bare stack trace. */
+function logSendOk(
+  kind: string,
+  args: OlidayTurnArgs,
+  wamid: string
+): void {
+  console.log('[oliday] whatsapp send ok:', {
+    kind,
+    conversationId: args.conversationId,
+    wamid,
+  });
+}
+
+function logSendFailure(
+  kind: string,
+  args: OlidayTurnArgs,
+  err: unknown
+): void {
+  console.error('[oliday] WHATSAPP SEND FAILED:', {
+    kind,
     accountId: args.accountId,
-    userId: args.configOwnerUserId,
     conversationId: args.conversationId,
     contactId: args.contactId,
-    text,
-    aiGenerated: true,
+    error: err instanceof Error ? err.message : String(err),
   });
 }
 
@@ -105,11 +141,17 @@ export async function sendWithOptions(
     conversationId: args.conversationId,
     contactId: args.contactId,
   };
+  const kind =
+    options.length === 0
+      ? 'text'
+      : options.length <= 3
+        ? 'interactive-buttons'
+        : 'interactive-list';
   try {
     if (options.length === 0) {
       await sendPlain(args, text);
     } else if (options.length <= 3) {
-      await engineSendInteractiveButtons({
+      const { whatsapp_message_id } = await engineSendInteractiveButtons({
         ...base,
         bodyText: text,
         buttons: options.map((o, i) => ({
@@ -117,8 +159,9 @@ export async function sendWithOptions(
           title: truncate(o, 20),
         })),
       });
+      logSendOk(kind, args, whatsapp_message_id);
     } else {
-      await engineSendInteractiveList({
+      const { whatsapp_message_id } = await engineSendInteractiveList({
         ...base,
         bodyText: text,
         buttonLabel: 'Choose',
@@ -132,13 +175,15 @@ export async function sendWithOptions(
           },
         ],
       });
+      logSendOk(kind, args, whatsapp_message_id);
     }
   } catch (err) {
-    console.error(
-      '[oliday] interactive send failed, falling back to text:',
-      err
-    );
+    logSendFailure(kind, args, err);
+    console.error('[oliday] falling back to numbered plain text');
     const numbered = options.map((o, i) => `${i + 1}. ${o}`).join('\n');
+    // sendPlain logs its own failure before rethrowing — if this throws
+    // too, the turn is genuinely undeliverable and the agent's catch
+    // takes it from here.
     await sendPlain(args, numbered ? `${text}\n\n${numbered}` : text);
   }
 }
