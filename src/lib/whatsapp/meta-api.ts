@@ -50,7 +50,14 @@ interface MetaErrorResponse {
  * The `code NNNNNN` form also keeps isRecipientNotAllowedError's
  * 131030 match working when Meta leaves the number out of `message`.
  */
-async function throwMetaError(response: Response, fallback: string): Promise<never> {
+async function throwMetaError(
+  response: Response,
+  fallback: string,
+  /** The body we posted, echoed into the failure log so the request and
+   *  Metas answer land on ONE error-level line — log views that filter to
+   *  errors would otherwise hide the `console.log` payload trace. */
+  requestBody?: unknown,
+): Promise<never> {
   let message = fallback
   const parts: string[] = []
   // Read the body ONCE as text so the raw envelope can still be logged
@@ -83,7 +90,11 @@ async function throwMetaError(response: Response, fallback: string): Promise<nev
   console.error('[meta] WHATSAPP API CALL FAILED:', {
     url: response.url,
     status: response.status,
-    body: rawBody.slice(0, 2000),
+    request:
+      requestBody === undefined
+        ? undefined
+        : JSON.stringify(requestBody).slice(0, 2000),
+    response: rawBody.slice(0, 2000),
   })
 
   throw new Error(`${message} [${parts.join(' · ')}]`)
@@ -326,7 +337,7 @@ export async function sendTextMessage(
     body: JSON.stringify(body),
   })
   if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`)
+    await throwMetaError(response, `Meta API error: ${response.status}`, body)
   }
   const data = await response.json()
   logMetaAccepted('text', data)
@@ -394,7 +405,7 @@ export async function sendMediaMessage(
     body: JSON.stringify(body),
   })
   if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`)
+    await throwMetaError(response, `Meta API error: ${response.status}`, body)
   }
   const data = await response.json()
   logMetaAccepted('media', data)
@@ -904,7 +915,7 @@ export async function sendInteractiveButtons(
     body: JSON.stringify(body),
   })
   if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`)
+    await throwMetaError(response, `Meta API error: ${response.status}`, body)
   }
   const data = await response.json()
   logMetaAccepted('interactive-buttons', data)
@@ -1038,7 +1049,7 @@ export async function sendInteractiveList(
     body: JSON.stringify(body),
   })
   if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`)
+    await throwMetaError(response, `Meta API error: ${response.status}`, body)
   }
   const data = await response.json()
   logMetaAccepted('interactive-list', data)
