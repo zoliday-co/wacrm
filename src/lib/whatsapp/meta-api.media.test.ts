@@ -15,9 +15,13 @@ let captured: CapturedBody | null = null;
 function okFetch() {
   return vi.fn(async (_url: string, init?: RequestInit) => {
     captured = init?.body ? (JSON.parse(init.body as string) as CapturedBody) : null;
+    // The sender reads the body as text (it has to inspect the raw
+    // envelope to decide whether a failure warrants retrying in the
+    // other encoding), so the mock has to offer text(), not json().
     return {
       ok: true,
-      json: async () => ({ messages: [{ id: "wamid.TEST" }] }),
+      status: 200,
+      text: async () => JSON.stringify({ messages: [{ id: "wamid.TEST" }] }),
     } as Response;
   });
 }

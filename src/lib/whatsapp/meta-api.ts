@@ -50,19 +50,16 @@ interface MetaErrorResponse {
  * The `code NNNNNN` form also keeps isRecipientNotAllowedError's
  * 131030 match working when Meta leaves the number out of `message`.
  */
-async function throwMetaError(
-  response: Response,
-  fallback: string,
-  /** The body we posted, echoed into the failure log so the request and
-   *  Metas answer land on ONE error-level line — log views that filter to
-   *  errors would otherwise hide the `console.log` payload trace. */
-  requestBody?: unknown,
-): Promise<never> {
+function throwMetaErrorFromRaw(args: {
+  url: string
+  status: number
+  rawBody: string
+  fallback: string
+  requestBody?: unknown
+}): never {
+  const { url, status, rawBody, fallback, requestBody } = args
   let message = fallback
   const parts: string[] = []
-  // Read the body ONCE as text so the raw envelope can still be logged
-  // when it is not JSON (Meta's 5xx responses often are not).
-  const rawBody = await response.text().catch(() => '')
   try {
     const data = JSON.parse(rawBody) as MetaErrorResponse
     const err = data.error
@@ -81,15 +78,11 @@ async function throwMetaError(
   } catch {
     // response body wasn't JSON — keep the fallback
   }
-  parts.push(`HTTP ${response.status}`)
+  parts.push(`HTTP ${status}`)
 
-  // The verbatim envelope, on one greppable line. Meta hides the real
-  // reason for a rejection (account blocks, template state) in fields it
-  // leaves out of `error.message`, so print exactly what came back on
-  // the wire. The URL holds no secret — the token travels in a header.
   console.error('[meta] WHATSAPP API CALL FAILED:', {
-    url: response.url,
-    status: response.status,
+    url,
+    status,
     request:
       requestBody === undefined
         ? undefined
@@ -98,6 +91,23 @@ async function throwMetaError(
   })
 
   throw new Error(`${message} [${parts.join(' · ')}]`)
+}
+
+/** Response-taking wrapper for the non-message endpoints (templates,
+ *  media, registration) that still post JSON directly. */
+async function throwMetaError(
+  response: Response,
+  fallback: string,
+  requestBody?: unknown,
+): Promise<never> {
+  const rawBody = await response.text().catch(() => '')
+  return throwMetaErrorFromRaw({
+    url: response.url,
+    status: response.status,
+    rawBody,
+    fallback,
+    requestBody,
+  })
 }
 
 /**
@@ -120,6 +130,122 @@ function logMetaRequest(kind: string, url: string, body: unknown): void {
 
 function logMetaAccepted(kind: string, data: unknown): void {
   console.log(`[meta] ← ACCEPTED ${kind}`, JSON.stringify(data))
+}
+// ============================================================
+// Message POST transport
+// ============================================================
+//
+// Graph accepts a message either as a JSON body or as form-encoded
+// params with the nested objects (`text`, `interactive`, `image`, …)
+// JSON-stringified per field. Both are documented; the Cloud API docs
+// show JSON, so that is what we send first.
+//
+// On 2026-08-31 Meta's edge began answering EVERY JSON-bodied send from
+// our number with HTTP 500 `code 1` ("An unknown error has occurred.")
+// while accepting the byte-identical params form-encoded — verified by
+// alternating the two encodings, seconds apart, same token, same
+// recipient: JSON 500/500/500, form 200/200/200. Nothing about the
+// payload was wrong; the transport was.
+//
+// So: try the preferred encoding, and on a 5xx or `code 1` — the shape
+// of a Meta-side transport failure, never of a bad payload, which comes
+// back 400 `code 100` naming the param — retry once with the other
+// encoding. A success on the retry latches that encoding for the rest of
+// the process, so we pay the double round-trip once rather than per
+// message, and recover automatically whichever side Meta breaks next.
+
+type MessageEncoding = 'json' | 'form'
+
+let preferredEncoding: MessageEncoding = 'json'
+
+/** Flatten a Graph message payload into form params: scalars as-is,
+ *  nested objects JSON-stringified, which is what Graph expects. */
+function toFormBody(payload: Record<string, unknown>): URLSearchParams {
+  const form = new URLSearchParams()
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined || value === null) continue
+    form.set(key, typeof value === 'object' ? JSON.stringify(value) : String(value))
+  }
+  return form
+}
+
+async function postMessageOnce(
+  url: string,
+  accessToken: string,
+  payload: Record<string, unknown>,
+  encoding: MessageEncoding,
+): Promise<{ ok: boolean; status: number; rawBody: string }> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers:
+      encoding === 'json'
+        ? { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` }
+        : {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Authorization: `Bearer ${accessToken}`,
+          },
+    body:
+      encoding === 'json' ? JSON.stringify(payload) : toFormBody(payload).toString(),
+  })
+  return { ok: response.ok, status: response.status, rawBody: await response.text() }
+}
+
+/** True for failures that look like Meta's transport choking rather than
+ *  a rejection of what we sent. A malformed payload is a 400 with
+ *  `code 100`; those must NOT trigger a re-send in another encoding. */
+function isTransportFailure(status: number, rawBody: string): boolean {
+  if (status >= 500) return true
+  try {
+    return (JSON.parse(rawBody) as MetaErrorResponse).error?.code === 1
+  } catch {
+    return false
+  }
+}
+
+/**
+ * POST a message payload, falling back to the other encoding once when
+ * the first attempt fails in a way that implicates the transport.
+ * Returns Meta's parsed response; throws a described error otherwise.
+ */
+async function postMetaMessage(args: {
+  url: string
+  accessToken: string
+  payload: Record<string, unknown>
+  kind: string
+}): Promise<{ messages: { id: string }[] }> {
+  const { url, accessToken, payload, kind } = args
+  logMetaRequest(kind, url, payload)
+
+  const first = preferredEncoding
+  let attempt = await postMessageOnce(url, accessToken, payload, first)
+
+  if (!attempt.ok && isTransportFailure(attempt.status, attempt.rawBody)) {
+    const alternate: MessageEncoding = first === 'json' ? 'form' : 'json'
+    console.warn(
+      `[meta] ${first} send failed with HTTP ${attempt.status}; retrying as ${alternate}`,
+    )
+    const retry = await postMessageOnce(url, accessToken, payload, alternate)
+    if (retry.ok) {
+      preferredEncoding = alternate
+      console.warn(
+        `[meta] ${alternate} encoding succeeded — using it for subsequent sends`,
+      )
+    }
+    attempt = retry
+  }
+
+  if (!attempt.ok) {
+    throwMetaErrorFromRaw({
+      url,
+      status: attempt.status,
+      rawBody: attempt.rawBody,
+      fallback: `Meta API error: ${attempt.status}`,
+      requestBody: payload,
+    })
+  }
+  const data = JSON.parse(attempt.rawBody) as { messages: { id: string }[] }
+  logMetaAccepted(kind, data)
+  return data
 }
 // ============================================================
 // Phone number / account
@@ -327,20 +453,12 @@ export async function sendTextMessage(
   if (contextMessageId) {
     body.context = { message_id: contextMessageId }
   }
-  logMetaRequest('text', url, body)
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
+  const data = await postMetaMessage({
+    url,
+    accessToken,
+    payload: body,
+    kind: 'text',
   })
-  if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`, body)
-  }
-  const data = await response.json()
-  logMetaAccepted('text', data)
   return { messageId: data.messages[0].id }
 }
 
@@ -395,20 +513,12 @@ export async function sendMediaMessage(
   }
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
-  logMetaRequest('media', url, body)
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
+  const data = await postMetaMessage({
+    url,
+    accessToken,
+    payload: body,
+    kind: 'media',
   })
-  if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`, body)
-  }
-  const data = await response.json()
-  logMetaAccepted('media', data)
   return { messageId: data.messages[0].id }
 }
 
@@ -905,20 +1015,12 @@ export async function sendInteractiveButtons(
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
-  logMetaRequest('interactive-buttons', url, body)
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
+  const data = await postMetaMessage({
+    url,
+    accessToken,
+    payload: body,
+    kind: 'interactive-buttons',
   })
-  if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`, body)
-  }
-  const data = await response.json()
-  logMetaAccepted('interactive-buttons', data)
   return { messageId: data.messages[0].id }
 }
 
@@ -1039,20 +1141,12 @@ export async function sendInteractiveList(
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
-  logMetaRequest('interactive-list', url, body)
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
+  const data = await postMetaMessage({
+    url,
+    accessToken,
+    payload: body,
+    kind: 'interactive-list',
   })
-  if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`, body)
-  }
-  const data = await response.json()
-  logMetaAccepted('interactive-list', data)
   return { messageId: data.messages[0].id }
 }
 
