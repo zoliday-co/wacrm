@@ -89,6 +89,27 @@ async function throwMetaError(response: Response, fallback: string): Promise<nev
   throw new Error(`${message} [${parts.join(' · ')}]`)
 }
 
+/**
+ * The composed payload, verbatim, immediately before it goes on the wire —
+ * and the id Meta hands back when it accepts one.
+ *
+ * Meta's rejections rarely say what it disliked, so the only way to tell a
+ * malformed body from an account-level block is to read the exact JSON we
+ * sent next to the exact answer we got. A `code 100` naming a param means
+ * the body is wrong; a body Meta echoes a `wamid` for was fine and the
+ * problem is elsewhere.
+ *
+ * These log customer message text. That is the point — you cannot debug a
+ * message format without seeing the message — but it does mean outbound
+ * content lands in the platform logs.
+ */
+function logMetaRequest(kind: string, url: string, body: unknown): void {
+  console.log(`[meta] → SEND ${kind}`, JSON.stringify({ url, body }))
+}
+
+function logMetaAccepted(kind: string, data: unknown): void {
+  console.log(`[meta] ← ACCEPTED ${kind}`, JSON.stringify(data))
+}
 // ============================================================
 // Phone number / account
 // ============================================================
@@ -295,6 +316,7 @@ export async function sendTextMessage(
   if (contextMessageId) {
     body.context = { message_id: contextMessageId }
   }
+  logMetaRequest('text', url, body)
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -307,6 +329,7 @@ export async function sendTextMessage(
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
   const data = await response.json()
+  logMetaAccepted('text', data)
   return { messageId: data.messages[0].id }
 }
 
@@ -361,6 +384,7 @@ export async function sendMediaMessage(
   }
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
+  logMetaRequest('media', url, body)
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -373,6 +397,7 @@ export async function sendMediaMessage(
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
   const data = await response.json()
+  logMetaAccepted('media', data)
   return { messageId: data.messages[0].id }
 }
 
@@ -869,6 +894,7 @@ export async function sendInteractiveButtons(
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  logMetaRequest('interactive-buttons', url, body)
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -881,6 +907,7 @@ export async function sendInteractiveButtons(
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
   const data = await response.json()
+  logMetaAccepted('interactive-buttons', data)
   return { messageId: data.messages[0].id }
 }
 
@@ -1001,6 +1028,7 @@ export async function sendInteractiveList(
   if (contextMessageId) body.context = { message_id: contextMessageId }
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  logMetaRequest('interactive-list', url, body)
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -1013,6 +1041,7 @@ export async function sendInteractiveList(
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }
   const data = await response.json()
+  logMetaAccepted('interactive-list', data)
   return { messageId: data.messages[0].id }
 }
 
