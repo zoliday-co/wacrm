@@ -10,6 +10,8 @@ import { engineSendText } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import { isOlidayBotEnabled } from '@/lib/oliday/env'
 import { runOlidayTurn, type OlidayInbound } from '@/lib/oliday/agent'
+import { isNikoPhone } from '@/lib/niko/env'
+import { runNikoTurn } from '@/lib/niko/agent'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -26,6 +28,13 @@ interface DispatchArgs {
    * the generic assistant below still answers plain text only.
    */
   inbound?: OlidayInbound
+  /**
+   * The sender's number, straight off the webhook payload. Only used to
+   * decide whether this conversation belongs to Niko; when absent the
+   * dispatcher reads it off the contact instead, so callers that predate
+   * Niko keep working.
+   */
+  fromPhone?: string
 }
 
 /**
@@ -83,6 +92,38 @@ export async function dispatchInboundToAiReply(
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
     if (conv.ai_autoreply_disabled) return // manually turned off here
+
+    // Niko branch: a second assistant on the same WhatsApp number,
+    // selected by WHO is messaging rather than by how the conversation
+    // started. While Niko is in MVP its allow-list is a handful of pilot
+    // numbers, so every other sender falls through to Oliday untouched.
+    // Checked before Oliday deliberately — a pilot user must never get
+    // the travel bot by accident.
+    if (args.inbound && config.provider === 'gemini') {
+      const phone = args.fromPhone ?? (await contactPhone(db, contactId))
+      if (isNikoPhone(phone)) {
+        const nikoLimit = checkRateLimit(
+          `ai-autoreply:${accountId}`,
+          RATE_LIMITS.aiAutoReplyAccount,
+        )
+        if (!nikoLimit.success) {
+          console.warn(
+            `[niko] account ${accountId} hit the per-account rate limit — skipping this inbound.`,
+          )
+          return
+        }
+        await runNikoTurn({
+          db,
+          accountId,
+          conversationId,
+          contactId,
+          configOwnerUserId,
+          config,
+          inbound: args.inbound,
+        })
+        return
+      }
+    }
 
     // Oliday agent branch: when the deployment enables the bot and
     // the account runs Gemini, the trip-qualification agent owns the
@@ -223,4 +264,17 @@ export async function dispatchInboundToAiReply(
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }
+}
+
+/** Fallback lookup for callers that don't pass the sender's number. */
+async function contactPhone(
+  db: ReturnType<typeof supabaseAdmin>,
+  contactId: string,
+): Promise<string | null> {
+  const { data } = await db
+    .from('contacts')
+    .select('phone')
+    .eq('id', contactId)
+    .maybeSingle()
+  return typeof data?.phone === 'string' ? data.phone : null
 }
