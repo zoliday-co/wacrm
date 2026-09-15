@@ -27,7 +27,7 @@ Content-Type: application/json
 
 `bot_session_id` is unique within an account. Re-delivery returns the existing lead and does not create another RFQ. Phone identifies the contact only, so separate sessions for the same phone create separate travel leads.
 
-The built-in Oliday WhatsApp assistant also calls this ingestion service directly. A conversation becomes qualified only after it has destination, adults, an explicit child count and one age per child, nights, a date or travel month, 3/4/5-star category, room sharing, meal plan, places to cover, and specific requirements. Vehicle is recommended from total passengers (1–2 hatchback, 3–4 sedan, 5+ SUV). Completion creates the lead, links it to the WhatsApp conversation, and creates the first supplier RFQ. The conversation id forms the idempotency key, so Meta webhook retries cannot create duplicate leads or RFQs.
+The built-in Oliday WhatsApp assistant also calls this ingestion service directly. A conversation becomes qualified only after it has destination, adults, an explicit child count and one age per child, nights, a date or travel month, 3/4/5-star category, room sharing, meal plan, an explicit vehicle choice, places to cover, and specific requirements. Vehicle menus are constrained by passenger count: hatchback/sedan/SUV for 1–2, sedan/SUV for 3–4, and SUV for larger groups. Completion creates the lead, links it to the WhatsApp conversation, and creates the first supplier RFQ. There is no handoff stage. The conversation id forms the idempotency key, so Meta webhook retries cannot create duplicate leads or RFQs.
 
 ## Public links
 

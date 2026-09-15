@@ -19,6 +19,8 @@ describe('qualifiedLeadPayload', () => {
         nights: 5,
         travelMonth: 'December 2026',
         starCategory: 4,
+        roomOccupancy: 'DOUBLE',
+        mealPlan: 'BREAKFAST_DINNER',
         vehicleType: 'SEDAN',
         placesToCover: ['Gulmarg', 'Pahalgam'],
         specificRequirements: 'Vegetarian meals',
@@ -40,6 +42,8 @@ describe('qualifiedLeadPayload', () => {
       children: 1,
       child_ages: [8],
       hotel_category: '4 star',
+      room_configuration: 'DOUBLE',
+      meal_plan: 'BREAKFAST_DINNER',
       vehicle_type: 'Sedan',
       special_requests: 'Vegetarian meals',
     });

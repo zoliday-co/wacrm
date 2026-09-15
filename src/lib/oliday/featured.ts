@@ -67,7 +67,7 @@ export function featuredEventsSection(rule: string): string {
     rule,
     'These limited-time event trips are NOT in the packages catalog and NOT on Vibes — each lives on its own page. When a traveller brings one up (by event name, place or dates), NEVER say we don\'t have it: confirm warmly that we run it, share its page link exactly as written below, and answer only from the facts below.',
     ...bullets,
-    'BUT if the conversation OPENED with an enquiry about the event, they arrived from that very page — never throw its link back at them. Thank them for their interest, tell them our team will reach out right here shortly, and keep answering questions from the facts above.',
+    'If the conversation opened from an event page, qualify the traveller first. Do not mention team follow-up or resend the page until qualification is complete.',
     'The page carries the current prices and room tiers — for anything beyond these facts say the team will confirm, and set "needsSpecialist": true when they want to book one.',
   ].join('\n');
 }

@@ -52,9 +52,6 @@ export interface Trip {
    *  future messages cannot create another lead for the same enquiry. */
   crmLeadId?: string;
   crmQualifiedAt?: string;
-  /** Internal marker so an automatically chosen vehicle is recalculated
-   *  when the passenger count changes. */
-  _vehicleAuto?: boolean;
   /** A different callback number the traveller gave for the booking
    *  recap (their WhatsApp number is known implicitly). */
   altPhone?: string;
@@ -156,7 +153,13 @@ export function mergeTrip(current: Trip, extracted: unknown): Trip {
       .map((v) => asInt(v, 0, 17))
       .filter((v): v is number => v !== undefined)
       .slice(0, next.children ?? 20);
-    if (ages.length || next.children === 0) next.childAges = ages;
+    if (ages.length || next.children === 0) {
+      const existing = next.childAges ?? [];
+      next.childAges =
+        next.children && ages.length < next.children && existing.length + ages.length <= next.children
+          ? [...existing, ...ages]
+          : ages;
+    }
   }
   if (typeof e.roomOccupancy === 'string' && OCCUPANCIES.has(e.roomOccupancy)) {
     next.roomOccupancy = e.roomOccupancy as RoomOccupancy;
@@ -166,7 +169,6 @@ export function mergeTrip(current: Trip, extracted: unknown): Trip {
   }
   if (typeof e.vehicleType === 'string' && VEHICLES.has(e.vehicleType)) {
     next.vehicleType = e.vehicleType as VehicleType;
-    next._vehicleAuto = false;
   }
   const star = asInt(e.starCategory, 3, 5);
   if (star === 3 || star === 4 || star === 5) next.starCategory = star;
@@ -210,13 +212,6 @@ export function mergeTrip(current: Trip, extracted: unknown): Trip {
     const b = new Date(`${next.checkOutDate}T00:00:00Z`).getTime();
     const diff = Math.round((b - a) / 86_400_000);
     if (diff >= 1 && diff <= 30) next.nights = diff;
-  }
-
-  // A practical default that is consistent for the CRM and supplier RFQ.
-  // The traveller can still explicitly ask for a larger vehicle.
-  if ((!next.vehicleType || next._vehicleAuto) && next.adults !== undefined && next.children !== undefined) {
-    next.vehicleType = recommendedVehicleForPax(totalPax(next)!);
-    next._vehicleAuto = true;
   }
 
   return next;
@@ -303,11 +298,9 @@ export function derivedRooms(trip: Trip): number | undefined {
 /** Vehicle classes sized to the group — a couple never sees "Mini
  *  bus"; 10 people never see "Sedan". */
 export function vehicleOptionsForPax(pax: number): VehicleType[] {
-  if (pax <= 2) return ['HATCHBACK', 'SEDAN'];
+  if (pax <= 2) return ['HATCHBACK', 'SEDAN', 'SUV_MUV'];
   if (pax <= 4) return ['SEDAN', 'SUV_MUV'];
-  if (pax <= 6) return ['SUV_MUV', 'TEMPO_TRAVELLER'];
-  if (pax <= 12) return ['TEMPO_TRAVELLER', 'MINI_BUS'];
-  return ['MINI_BUS'];
+  return ['SUV_MUV'];
 }
 
 /** Vehicle automatically selected from total passenger count. */
@@ -329,6 +322,7 @@ export type SlotName =
   | 'nights'
   | 'pax'
   | 'childAges'
+  | 'vehicleType'
   | 'roomOccupancy'
   | 'mealPlan'
   | 'starCategory'
@@ -339,10 +333,13 @@ export function nextMissingSlot(trip: Trip): SlotName | null {
   if (!trip.destination) return 'destination';
   if (trip.adults === undefined || trip.children === undefined) return 'pax';
   if (trip.children > 0 && trip.childAges?.length !== trip.children) return 'childAges';
+  if (!trip.vehicleType) return 'vehicleType';
   if (trip.nights === undefined) return 'nights';
   if (!trip.dateFlexibility && !trip.checkInDate && !trip.travelMonth) {
     return 'dates';
   }
+  if (trip.dateFlexibility === 'EXACT_DATES' && !trip.checkInDate) return 'dates';
+  if (trip.dateFlexibility === 'MONTH_KNOWN' && !trip.travelMonth) return 'dates';
   if (!trip.starCategory) return 'starCategory';
   if (!trip.roomOccupancy) return 'roomOccupancy';
   if (!trip.mealPlan) return 'mealPlan';
@@ -386,8 +383,25 @@ export function deterministicExtract(text: string): Partial<Trip> {
 
   // Date flexibility — the fallback question's own button labels.
   if (lower === 'i have exact dates') out.dateFlexibility = 'EXACT_DATES';
+  else if (lower === 'exact dates') out.dateFlexibility = 'EXACT_DATES';
   else if (lower === 'i know the month') out.dateFlexibility = 'MONTH_KNOWN';
   else if (lower === 'flexible') out.dateFlexibility = 'FLEXIBLE';
+  const month = /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+(20\d{2})$/i.exec(t);
+  if (month) {
+    out.travelMonth = `${month[1][0].toUpperCase()}${month[1].slice(1).toLowerCase()} ${month[2]}`;
+    out.dateFlexibility = 'MONTH_KNOWN';
+  }
+  const indianDate = /\b(\d{1,2})[-/](\d{1,2})[-/](20\d{2})\b/.exec(t);
+  if (indianDate) {
+    const day = indianDate[1].padStart(2, '0');
+    const monthNumber = indianDate[2].padStart(2, '0');
+    const candidate = `${indianDate[3]}-${monthNumber}-${day}`;
+    const parsed = new Date(`${candidate}T00:00:00Z`);
+    if (!Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate) {
+      out.checkInDate = candidate;
+      out.dateFlexibility = 'EXACT_DATES';
+    }
+  }
 
   // Nights: "4n", "4 nights", "6+ nights".
   const nights = /(\d{1,2})\s*\+?\s*n(?:ights?)?\b/i.exec(t);
@@ -446,6 +460,12 @@ export function deterministicExtract(text: string): Partial<Trip> {
   if (/^(?:no preference|open to suggestions|you suggest)\.?$/i.test(t)) {
     out.placesToCover = ['Open to suggestions'];
   }
+  if (/^must-see highlights\.?$/i.test(t)) {
+    out.placesToCover = ['Must-see highlights'];
+  }
+  if (/^dietary needs\.?$/i.test(t)) out.specificRequirements = 'Dietary requirements';
+  else if (/^accessibility\.?$/i.test(t)) out.specificRequirements = 'Accessibility requirements';
+  else if (/^celebration setup\.?$/i.test(t)) out.specificRequirements = 'Celebration setup';
 
   return out;
 }
@@ -465,13 +485,20 @@ export function fallbackQuestion(trip: Trip): {
     case 'destination':
       return {
         text: 'Where are you dreaming of going? I can help with Kashmir, Kerala, Andaman, Himachal, Rajasthan, Ladakh and more.',
-        options: ['Kashmir', 'Kerala', 'Andaman'],
+        options: ['Ladakh', 'Kashmir', 'Kerala', 'Andaman', 'Himachal', 'Rajasthan', 'Goa'],
       };
-    case 'dates':
+    case 'dates': {
+      if (trip.dateFlexibility === 'EXACT_DATES') {
+        return { text: 'Please send your travel start date in DD-MM-YYYY format.', options: [] };
+      }
+      if (trip.dateFlexibility === 'MONTH_KNOWN') {
+        return { text: 'Which month are you planning to travel?', options: upcomingMonths(8) };
+      }
       return {
-        text: 'When are you planning to travel — do you have exact dates, just the month, or still flexible?',
-        options: ['I have exact dates', 'I know the month', 'Flexible'],
+        text: 'When are you planning to travel?',
+        options: [...upcomingMonths(7), 'Exact dates', 'Flexible'],
       };
+    }
     case 'nights':
       return {
         text: 'How many nights are you thinking?',
@@ -479,14 +506,27 @@ export function fallbackQuestion(trip: Trip): {
       };
     case 'pax':
       return {
-        text: 'How many adults and children will be travelling? Please include 0 children if it is adults only.',
-        options: [],
+        text: 'How many adults and children will be travelling?',
+        options: ['1 adult, 0 kids', '2 adults, 0 kids', '2 adults, 1 kid', '2 adults, 2 kids', '4 adults, 0 kids', '6 adults, 0 kids', 'Other group size'],
       };
     case 'childAges':
       return {
-        text: `What ${trip.children === 1 ? 'is the child’s age' : `are the ages of the ${trip.children} children`}?`,
-        options: [],
+        text: `What ${trip.children === 1 ? 'is the child’s age' : `is the age of child ${(trip.childAges?.length ?? 0) + 1} of ${trip.children}`}?`,
+        options: ['Age 2', 'Age 3', 'Age 4', 'Age 5', 'Age 6', 'Age 7', 'Age 8', 'Age 9', 'Age 10', 'Other age'],
       };
+    case 'vehicleType': {
+      const labels: Record<VehicleType, string> = {
+        HATCHBACK: 'Hatchback',
+        SEDAN: 'Sedan',
+        SUV_MUV: 'SUV',
+        TEMPO_TRAVELLER: 'Tempo Traveller',
+        MINI_BUS: 'Mini Bus',
+      };
+      return {
+        text: 'Which vehicle type would you prefer for your group?',
+        options: vehicleOptionsForPax(totalPax(trip) ?? 1).map((v) => labels[v]),
+      };
+    }
     case 'starCategory':
       return {
         text: 'Hotel-wise, what are you leaning towards — 3★ comfortable, 4★ premium, or 5★ luxury?',
@@ -505,12 +545,12 @@ export function fallbackQuestion(trip: Trip): {
     case 'placesToCover':
       return {
         text: 'Which places or sights would you definitely like included in the itinerary?',
-        options: [],
+        options: ['Must-see highlights', 'Open to suggestions', 'Custom places'],
       };
     case 'specificRequirements':
       return {
         text: 'Any specific requirements I should note, such as accessibility, food, room, or celebration needs?',
-        options: ['No requirements'],
+        options: ['No requirements', 'Dietary needs', 'Accessibility', 'Celebration setup', 'Other requirement'],
       };
     default:
       return {
@@ -518,4 +558,12 @@ export function fallbackQuestion(trip: Trip): {
         options: [],
       };
   }
+}
+
+function upcomingMonths(count: number): string[] {
+  const now = new Date();
+  return Array.from({ length: count }, (_, offset) => {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1));
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  });
 }

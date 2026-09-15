@@ -65,7 +65,7 @@ describe('prompts carry the featured events', () => {
     expect(prompt).toContain('/dev-deepawali-2026');
   });
 
-  it('the packages prompt refers featured-event asks to the page', () => {
+  it('the qualification prompt stays focused on collecting lead fields', () => {
     const prompt = buildOlidayPrompt({
       trip: {},
       today: '2026-08-20',
@@ -74,7 +74,8 @@ describe('prompts carry the featured events', () => {
       phone: null,
       shownPackages: [],
     });
-    expect(prompt).toContain('FEATURED EVENT TRIPS');
-    expect(prompt).toContain('/dev-deepawali-2026');
+    expect(prompt).toContain('trip qualification assistant');
+    expect(prompt).toContain('vehicleType');
+    expect(prompt).not.toContain('/dev-deepawali-2026');
   });
 });

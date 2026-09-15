@@ -2,24 +2,13 @@
 // The Oliday agent turn — invoked from `dispatchInboundToAiReply`
 // when the bot is enabled and the account runs provider='gemini'.
 //
-// This file is also the ORCHESTRATION LAYER: after the shared
-// plumbing (media ack, debounce), each inbound routes to one of two
-// agents — the Vibes agent (`vibes-agent.ts`) when the conversation
-// entered through a Vibes surface (the `(vibes:<tripId>)` tag or the
-// generic Vibes prefill; sticky via `conversations.vibes`), else the
-// packages agent below. A mid-chat packages ask inside a Vibes chat
-// hands the same inbound back to the packages agent.
-//
-// The packages agent owns:
+// The qualification agent owns:
 //   - trip-slot state on `conversations.trip` (source of truth)
-//   - the Gemini function-calling loop over search_packages /
-//     get_package (retrieval-grounded — §7)
+//   - Gemini extraction of free-text answers
 //   - interactive quick replies (buttons ≤3, list 4–10)
 //   - deterministic fallback on LLM failure (the bot never goes
 //     silent on an inbound)
-//
-// The bot NEVER hands off on its own — no self-pause, no auto-assign.
-// A human takes over only manually via the inbox "Take over" action.
+//   - idempotent creation of a qualified CRM lead and its first RFQ
 //
 // Contract with the caller: NEVER throws — a failing turn must not
 // affect the webhook's 200 to Meta.
@@ -41,19 +30,14 @@ import {
   sendPlain,
   sendWithOptions,
   sleep,
-  truncate,
   type OlidayTurnArgs,
 } from './shared';
-import { matchFeaturedPrefill } from './featured';
-import { runVibesTurn } from './vibes-agent';
-import { routeInbound, type VibesState } from './vibes';
 import { searchPackages } from './search';
 import { getPackage } from './package';
 import { buildOlidayPrompt } from './prompt';
 import { parseDealLink, tripFromDealLink } from './entry';
 import {
   mergeTrip,
-  mergeStage,
   fallbackQuestion,
   deterministicExtract,
   isQualifiedTrip,
@@ -72,26 +56,20 @@ export { parseAgentJson } from './shared';
 const DEBOUNCE_MS = 2500;
 
 const MEDIA_ACK =
-  "Thanks for sharing! I can't open attachments here just yet — our team will take a look. Meanwhile, tell me a bit more in text and I'll keep planning your trip right here.";
+  "Thanks for sharing! I can't read attachments here yet. Please send the trip details in text so I can capture them accurately.";
+
+const QUALIFIED_SAVED =
+  'Thank you — your trip requirements are complete and have been added successfully.';
+
+const QUALIFIED_READY_TO_SAVE =
+  'Thank you — I have all your trip requirements. Please confirm once to finish adding the lead.';
 
 interface AgentJson {
   extractedFields?: unknown;
   response?: string;
   options?: unknown;
-  /** Stage 2: the package they picked from the shown list. */
-  selectedPackage?: unknown;
-  /** Stage 2 done: confirmed the picked package after its detail. */
-  packageConfirmed?: boolean;
-  /** Stage 3 done: confirmed the booking recap card + number. */
-  bookingRequestConfirmed?: boolean;
-  /** Advisory flag for the team (logged only — the bot NEVER pauses
-   *  itself or assigns; humans take over manually from the inbox). */
-  needsSpecialist?: boolean;
   /** False when the message is unrelated to trip planning. */
   isRelevant?: boolean;
-  /** Legacy field older prompts taught — ignored: the bot never hands
-   *  off on its own. */
-  handoff?: boolean;
 }
 
 export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
@@ -101,7 +79,7 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     // ---- Load bot state ----------------------------------------
     const { data: conv } = await db
       .from('conversations')
-      .select('trip, shown_packages, entry_context, vibes, travel_lead_id')
+      .select('trip, shown_packages, entry_context, travel_lead_id')
       .eq('id', conversationId)
       .maybeSingle();
     let trip: Trip = (conv?.trip as Trip) ?? {};
@@ -143,36 +121,6 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
         // invocation sees the full batch; this one stands down.
         return;
       }
-    }
-
-    // ---- Featured-event page CTA: canned ack -------------------
-    // The traveller tapped the WhatsApp button ON the event's own
-    // landing page — they just left it, so the LLM path (which would
-    // send the link back) is wrong. One warm deterministic ack; the
-    // team follows up, and any typed follow-up takes the normal LLM
-    // path where the featured-events prompt block handles it.
-    const featuredEvent = matchFeaturedPrefill(inbound.text);
-    if (featuredEvent) {
-      console.log(
-        `[oliday] featured-event lead (${featuredEvent.name}) on conversation ${conversationId} — specialist follow-up`
-      );
-      if (!(await claimSlot(db, conversationId))) return;
-      await sendPlain(args, featuredEvent.ackText);
-      return;
-    }
-
-    // ---- Orchestration: Vibes or packages? ---------------------
-    // Route on the machine tag / known Vibes prefills, sticky via
-    // `conversations.vibes`. A packages/pricing ask inside a Vibes
-    // chat falls through so the packages agent answers this same
-    // inbound (the Vibes agent already sent its one-line bridge).
-    const vibesState = routeInbound(
-      inbound.text,
-      (conv?.vibes as VibesState | null) ?? null
-    );
-    if (vibesState) {
-      const outcome = await runVibesTurn({ ...args, state: vibesState });
-      if (outcome !== 'switch_to_packages') return;
     }
 
     // ---- First-turn prefill from a deal deep link --------------
@@ -268,7 +216,6 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
 
     // ---- Merge extraction + stage progress ---------------------
     trip = mergeTrip(trip, result.parsed.extractedFields);
-    trip = mergeStage(trip, result.parsed);
 
     // Qualification and CRM ingestion are driven by validated state,
     // never by an LLM flag. The deterministic idempotency key makes a
@@ -287,15 +234,6 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       trip,
     });
 
-    // Advisory only — surfaces in the logs for the team; the bot never
-    // pauses itself or assigns anyone (manual takeover from the inbox).
-    if (result.parsed.needsSpecialist === true) {
-      console.log(
-        `[oliday] specialist flagged on conversation ${conversationId}` +
-          (trip.bookingRequestConfirmed ? ' (booking request confirmed)' : '')
-      );
-    }
-
     void logAiUsage(db, {
       accountId,
       conversationId,
@@ -305,11 +243,6 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       usage: result.usage,
     });
 
-    const responseText =
-      typeof result.parsed.response === 'string'
-        ? result.parsed.response.trim()
-        : '';
-
     await persistTrip(
       db,
       conversationId,
@@ -317,38 +250,25 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       result.searchShown.length > 0 ? result.searchShown : null
     );
 
-    if (!responseText) {
-      // Model returned JSON with no message — treat as a soft failure
-      // rather than sending an empty bubble.
+    // During qualification the server owns the next step. This keeps
+    // the bot from skipping fields, asking questions out of order, or
+    // attempting catalog search while the lead brief is incomplete.
+    if (!isQualifiedTrip(trip)) {
       const q = fallbackQuestion(trip);
       if (!(await claimSlot(db, conversationId))) return;
       await sendWithOptions(args, q.text, q.options);
       return;
     }
 
-    // ---- Send, with quick replies where provided ---------------
+    // There is no handoff stage. Completion means the lead exists in
+    // CRM; acknowledge that result and end the qualification flow.
     if (!(await claimSlot(db, conversationId))) return;
-    let options = Array.isArray(result.parsed.options)
-      ? result.parsed.options
-          .filter((o): o is string => typeof o === 'string' && o.trim() !== '')
-          .slice(0, 10)
-      : [];
-    // Deterministic backstop: a turn that just showed packages always
-    // ends with "pick one", so it must always carry tap choices — the
-    // model sometimes sends [] when catalog names repeat ("Andaman 4N"
-    // × 4) and it can't form distinct labels. Package names when they
-    // are unique, "Option N" (matching card order, resolvable against
-    // PACKAGES ALREADY SHOWN next turn) when they are not.
-    if (options.length === 0 && result.searchShown.length > 0) {
-      const shown = result.searchShown.slice(0, 10);
-      const names = shown.map((p) => truncate(p.name, 20));
-      const unique = new Set(names.map((n) => n.toLowerCase()));
-      options =
-        unique.size === names.length
-          ? names
-          : shown.map((_, i) => `Option ${i + 1}`);
-    }
-    await sendWithOptions(args, responseText, options);
+    await sendWithOptions(
+      args,
+      trip.crmLeadId ? QUALIFIED_SAVED : QUALIFIED_READY_TO_SAVE,
+      trip.crmLeadId ? [] : ['Confirm']
+    );
+    return;
   } catch (err) {
     console.error('[oliday] turn failed:', err);
   }
@@ -504,7 +424,9 @@ async function generateTurn(input: {
     systemPrompt,
     messages,
     timeoutMs: aiRequestTimeoutMs(),
-    tools,
+    // This assistant is qualification-only. Keep the historical tool
+    // declarations inert so no package/catalog call can occur.
+    tools: tools.filter(() => false),
     maxToolRounds: 4,
     // Low temperature on purpose: the same ask should produce the
     // same behaviour (same slot question, same card format, reliable

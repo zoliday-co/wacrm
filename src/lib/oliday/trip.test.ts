@@ -96,6 +96,8 @@ describe('slot order', () => {
     expect(nextMissingSlot(trip)).toBe('pax');
     trip.adults = 2;
     trip.children = 0;
+    expect(nextMissingSlot(trip)).toBe('vehicleType');
+    trip.vehicleType = 'HATCHBACK';
     expect(nextMissingSlot(trip)).toBe('nights');
     trip.nights = 5;
     expect(nextMissingSlot(trip)).toBe('dates');
@@ -123,8 +125,9 @@ describe('slot order', () => {
     };
     expect(nextMissingSlot(base)).toBe('childAges');
     expect(nextMissingSlot({ ...base, childAges: [6] })).toBe('childAges');
-    expect(nextMissingSlot({ ...base, childAges: [6, 9] })).toBe('roomOccupancy');
-    expect(nextMissingSlot({ ...base, childAges: [6, 9], roomOccupancy: 'DOUBLE' })).toBe('mealPlan');
+    expect(nextMissingSlot({ ...base, childAges: [6, 9] })).toBe('vehicleType');
+    expect(nextMissingSlot({ ...base, childAges: [6, 9], vehicleType: 'SEDAN' })).toBe('roomOccupancy');
+    expect(nextMissingSlot({ ...base, childAges: [6, 9], vehicleType: 'SEDAN', roomOccupancy: 'DOUBLE' })).toBe('mealPlan');
   });
 });
 
@@ -136,9 +139,9 @@ describe('derivations (asked never, derived always)', () => {
   });
 
   it('vehicle options sized to the group', () => {
-    expect(vehicleOptionsForPax(2)).toEqual(['HATCHBACK', 'SEDAN']);
+    expect(vehicleOptionsForPax(2)).toEqual(['HATCHBACK', 'SEDAN', 'SUV_MUV']);
     expect(vehicleOptionsForPax(10)).not.toContain('SEDAN');
-    expect(vehicleOptionsForPax(20)).toEqual(['MINI_BUS']);
+    expect(vehicleOptionsForPax(20)).toEqual(['SUV_MUV']);
   });
 
   it('recommends hatchback, sedan, or SUV from passenger count', () => {
@@ -147,12 +150,6 @@ describe('derivations (asked never, derived always)', () => {
     expect(recommendedVehicleForPax(5)).toBe('SUV_MUV');
   });
 
-  it('recalculates an automatic vehicle after children are added', () => {
-    const adultsOnly = mergeTrip({}, { adults: 2, children: 0 });
-    expect(adultsOnly.vehicleType).toBe('HATCHBACK');
-    const family = mergeTrip(adultsOnly, { children: 3 });
-    expect(family.vehicleType).toBe('SUV_MUV');
-  });
 });
 
 describe('deterministicExtract (LLM-down slot filling)', () => {
@@ -206,6 +203,18 @@ describe('deterministicExtract (LLM-down slot filling)', () => {
 });
 
 describe('fallbackQuestion', () => {
+  it('uses menus for every closed qualification field', () => {
+    const states: Trip[] = [
+      {},
+      { destination: 'Ladakh' },
+      { destination: 'Ladakh', adults: 6, children: 0 },
+      { destination: 'Ladakh', adults: 2, children: 1 },
+      { destination: 'Ladakh', adults: 6, children: 0, vehicleType: 'SUV_MUV' },
+      { destination: 'Ladakh', adults: 6, children: 0, vehicleType: 'SUV_MUV', nights: 5 },
+    ];
+    for (const state of states) expect(fallbackQuestion(state).options.length).toBeGreaterThan(0);
+  });
+
   it('always produces a sendable question (the bot never goes silent)', () => {
     const stages: Trip[] = [
       {},
