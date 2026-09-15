@@ -938,8 +938,6 @@ async function processMessage(
       conversationId: conversation.id,
       contactId: contactRecord.id,
       configOwnerUserId,
-      // Routes Niko's pilot numbers to their own assistant.
-      fromPhone: message.from,
       inbound: {
         contentType,
         text: inboundText,
