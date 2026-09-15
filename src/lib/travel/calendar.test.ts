@@ -160,3 +160,35 @@ describe('tripsOnDay / departureBuckets', () => {
     expect(departureBuckets(trips, '2026-11-01')).toEqual([]);
   });
 });
+
+// ------------------------------------------------------------
+// The query that feeds the grid. A trip must appear whenever it
+// OVERLAPS the window — including one that started before it.
+// ------------------------------------------------------------
+
+describe('listBookingsForCalendar', () => {
+  it('returns every trip overlapping the window and skips cancelled ones', async () => {
+    const { createFakeDb, baseSeed } = await import('./test-support');
+    const { listBookingsForCalendar } = await import('./bookings');
+
+    const account = 'acct-1';
+    const seed = baseSeed(account);
+    seed.bookings = [
+      { id: 'b-inside', account_id: account, booking_number: 'OLI-1', travel_start_date: '2026-10-10', travel_end_date: '2026-10-15', status: 'CONFIRMED' },
+      { id: 'b-straddles-start', account_id: account, booking_number: 'OLI-2', travel_start_date: '2026-09-28', travel_end_date: '2026-10-03', status: 'FULLY_PAID' },
+      { id: 'b-straddles-end', account_id: account, booking_number: 'OLI-3', travel_start_date: '2026-10-29', travel_end_date: '2026-11-04', status: 'CONFIRMED' },
+      { id: 'b-open-ended', account_id: account, booking_number: 'OLI-4', travel_start_date: '2026-10-20', travel_end_date: null, status: 'CONFIRMED' },
+      { id: 'b-before', account_id: account, booking_number: 'OLI-5', travel_start_date: '2026-08-01', travel_end_date: '2026-08-05', status: 'CONFIRMED' },
+      { id: 'b-after', account_id: account, booking_number: 'OLI-6', travel_start_date: '2026-12-01', travel_end_date: '2026-12-05', status: 'CONFIRMED' },
+      { id: 'b-cancelled', account_id: account, booking_number: 'OLI-7', travel_start_date: '2026-10-12', travel_end_date: '2026-10-14', status: 'CANCELLED' },
+      { id: 'b-undated', account_id: account, booking_number: 'OLI-8', travel_start_date: null, travel_end_date: null, status: 'CONFIRMED' },
+      { id: 'b-other-tenant', account_id: 'other', booking_number: 'OLI-9', travel_start_date: '2026-10-12', travel_end_date: '2026-10-14', status: 'CONFIRMED' },
+    ];
+    const db = createFakeDb({ seed });
+
+    const rows = await listBookingsForCalendar(db as never, account, '2026-10-01', '2026-10-31');
+    const ids = rows.map((r) => r.id).sort();
+
+    expect(ids).toEqual(['b-inside', 'b-open-ended', 'b-straddles-end', 'b-straddles-start']);
+  });
+});
