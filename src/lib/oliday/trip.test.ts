@@ -9,6 +9,7 @@ import {
   recommendedVehicleForPax,
   isQualifiedTrip,
   fallbackQuestion,
+  qualificationRecap,
   deterministicExtract,
   type Trip,
 } from './trip';
@@ -195,6 +196,9 @@ describe('deterministicExtract (LLM-down slot filling)', () => {
     expect(deterministicExtract('No requirements')).toEqual({
       specificRequirements: 'None',
     });
+    expect(deterministicExtract('Nothing for now')).toEqual({
+      specificRequirements: 'None',
+    });
   });
 
   it('extracts nothing from unrelated text', () => {
@@ -247,5 +251,30 @@ describe('fallbackQuestion', () => {
         expect(o.length).toBeLessThanOrEqual(20);
       }
     }
+  });
+});
+
+describe('qualificationRecap', () => {
+  it('confirms every captured field and the quote follow-up', () => {
+    const message = qualificationRecap({
+      destination: 'Ladakh',
+      adults: 2,
+      children: 1,
+      childAges: [4],
+      vehicleType: 'SUV_MUV',
+      nights: 5,
+      travelMonth: 'November 2026',
+      starCategory: 3,
+      roomOccupancy: 'DOUBLE',
+      mealPlan: 'BREAKFAST',
+      placesToCover: ['Must-see highlights'],
+      specificRequirements: 'None',
+    });
+    expect(message).toContain('Ladakh');
+    expect(message).toContain('1 child (age 4)');
+    expect(message).toContain('November 2026');
+    expect(message).toContain('3 star · Double sharing · Breakfast');
+    expect(message).toContain('SUV');
+    expect(message).toContain('connect back with you here with quotes');
   });
 });

@@ -13,7 +13,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS traveller_quotes (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   travel_lead_id UUID NOT NULL REFERENCES travel_leads(id) ON DELETE CASCADE,
   supplier_quote_id UUID REFERENCES supplier_quotes(id) ON DELETE SET NULL,
@@ -87,7 +87,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON traveller_quotes
 -- an AI generator later just writes the same rows.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS itineraries (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   travel_lead_id UUID NOT NULL REFERENCES travel_leads(id) ON DELETE CASCADE,
   traveller_quote_id UUID REFERENCES traveller_quotes(id) ON DELETE SET NULL,
@@ -121,7 +121,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON itineraries
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TABLE IF NOT EXISTS itinerary_days (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   itinerary_id UUID NOT NULL REFERENCES itineraries(id) ON DELETE CASCADE,
   day_number INTEGER NOT NULL CHECK (day_number > 0),
@@ -158,7 +158,7 @@ CREATE POLICY itinerary_days_modify ON itinerary_days FOR ALL
 -- visibility (the hash is useless without the plaintext).
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS travel_access_tokens (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('callback', 'traveller_quote')),
   token_hash TEXT NOT NULL UNIQUE,

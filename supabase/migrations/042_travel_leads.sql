@@ -21,7 +21,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS travel_leads (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
 
   deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
@@ -125,7 +125,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON travel_leads
 -- bot's qualification; every agent edit appends a new version.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS travel_requirement_versions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   travel_lead_id UUID NOT NULL REFERENCES travel_leads(id) ON DELETE CASCADE,
   version INTEGER NOT NULL,
@@ -183,7 +183,7 @@ ALTER TABLE travel_leads
 -- merges `messages` at read time.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS travel_lead_events (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   travel_lead_id UUID NOT NULL REFERENCES travel_leads(id) ON DELETE CASCADE,
   event_type TEXT NOT NULL,

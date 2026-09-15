@@ -11,7 +11,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS supplier_quotes (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   rfq_id UUID NOT NULL REFERENCES rfqs(id) ON DELETE CASCADE,
   rfq_supplier_id UUID NOT NULL REFERENCES rfq_suppliers(id) ON DELETE CASCADE,
@@ -86,7 +86,7 @@ END $$;
 -- supplier_quote_items — optional line-level breakdown.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS supplier_quote_items (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   supplier_quote_id UUID NOT NULL REFERENCES supplier_quotes(id) ON DELETE CASCADE,
   category TEXT NOT NULL CHECK (category IN (

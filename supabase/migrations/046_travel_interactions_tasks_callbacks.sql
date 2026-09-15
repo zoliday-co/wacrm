@@ -8,7 +8,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS lead_interactions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   travel_lead_id UUID NOT NULL REFERENCES travel_leads(id) ON DELETE CASCADE,
   interaction_type TEXT NOT NULL CHECK (interaction_type IN ('CALL', 'NOTE', 'FOLLOW_UP', 'MEETING', 'SYSTEM')),
@@ -47,7 +47,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON lead_interactions
 -- travel_tasks
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS travel_tasks (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   travel_lead_id UUID REFERENCES travel_leads(id) ON DELETE CASCADE,
   booking_id UUID,
@@ -99,7 +99,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON travel_tasks
 -- callback_requests — traveller-chosen call slots.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS callback_requests (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   travel_lead_id UUID NOT NULL REFERENCES travel_leads(id) ON DELETE CASCADE,
   preferred_date DATE,

@@ -41,6 +41,7 @@ import {
   fallbackQuestion,
   deterministicExtract,
   isQualifiedTrip,
+  qualificationRecap,
   type Trip,
 } from './trip';
 import { syncQualifiedTripToCrm } from './qualified-lead';
@@ -58,9 +59,6 @@ const DEBOUNCE_MS = 2500;
 const MEDIA_ACK =
   "Thanks for sharing! I can't read attachments here yet. Please send the trip details in text so I can capture them accurately.";
 
-const QUALIFIED_SAVED =
-  'Thank you — your trip requirements are complete and have been added successfully.';
-
 const QUALIFIED_READY_TO_SAVE =
   'Thank you — I have all your trip requirements. Please confirm once to finish adding the lead.';
 
@@ -77,11 +75,14 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
 
   try {
     // ---- Load bot state ----------------------------------------
-    const { data: conv } = await db
+    const { data: conv, error: convError } = await db
       .from('conversations')
-      .select('trip, shown_packages, entry_context, travel_lead_id')
+      .select('trip, shown_packages, entry_context')
       .eq('id', conversationId)
       .maybeSingle();
+    if (convError) {
+      console.error('[oliday] conversation state load failed:', convError.message);
+    }
     let trip: Trip = (conv?.trip as Trip) ?? {};
     const shownPackages = Array.isArray(conv?.shown_packages)
       ? (conv!.shown_packages as {
@@ -204,7 +205,7 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
           contactRow?.referral && typeof contactRow.referral === 'object'
             ? (contactRow.referral as Record<string, unknown>)
             : null,
-        existingLeadId: typeof conv?.travel_lead_id === 'string' ? conv.travel_lead_id : null,
+        existingLeadId: null,
         trip,
       });
       await persistTrip(db, conversationId, trip, null);
@@ -215,6 +216,10 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     }
 
     // ---- Merge extraction + stage progress ---------------------
+    // Menu labels and common short answers have a deterministic parser.
+    // Merge it on successful LLM turns too, so a harmless model miss can
+    // never discard a value the server itself knows how to interpret.
+    trip = mergeTrip(trip, deterministicExtract(inbound.text));
     trip = mergeTrip(trip, result.parsed.extractedFields);
 
     // Qualification and CRM ingestion are driven by validated state,
@@ -230,7 +235,7 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
         contactRow?.referral && typeof contactRow.referral === 'object'
           ? (contactRow.referral as Record<string, unknown>)
           : null,
-      existingLeadId: typeof conv?.travel_lead_id === 'string' ? conv.travel_lead_id : null,
+      existingLeadId: null,
       trip,
     });
 
@@ -265,7 +270,7 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     if (!(await claimSlot(db, conversationId))) return;
     await sendWithOptions(
       args,
-      trip.crmLeadId ? QUALIFIED_SAVED : QUALIFIED_READY_TO_SAVE,
+      trip.crmLeadId ? qualificationRecap(trip) : QUALIFIED_READY_TO_SAVE,
       trip.crmLeadId ? [] : ['Confirm']
     );
     return;

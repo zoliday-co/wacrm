@@ -28,7 +28,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_pipeline_stages_stage_key
 -- threshold, reminders, tax model, margin guardrails).
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS travel_settings (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL UNIQUE REFERENCES accounts(id) ON DELETE CASCADE,
   pipeline_id UUID REFERENCES pipelines(id) ON DELETE SET NULL,
 
@@ -92,7 +92,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON travel_settings
 -- `aliases` lets matching accept "Kerela"/"kerala backwaters".
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS destinations (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   slug TEXT NOT NULL,
@@ -129,7 +129,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON destinations
 -- supplier.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS suppliers (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   company_name TEXT,
@@ -176,7 +176,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON suppliers
 -- `priority` is ascending (1 = first choice) within a destination.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS supplier_destinations (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   supplier_id UUID NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
   destination_id UUID NOT NULL REFERENCES destinations(id) ON DELETE CASCADE,

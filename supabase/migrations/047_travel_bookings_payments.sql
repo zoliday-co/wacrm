@@ -17,7 +17,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS bookings (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   booking_number TEXT NOT NULL,
 
@@ -156,7 +156,7 @@ GRANT EXECUTE ON FUNCTION next_booking_number(UUID, TEXT) TO authenticated, serv
 -- features can grow without a schema redesign.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS booking_items (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
   category TEXT NOT NULL CHECK (category IN (
@@ -195,7 +195,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON booking_items
 -- customer_payments
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS customer_payments (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
   amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
@@ -235,7 +235,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON customer_payments
 -- supplier_payments
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS supplier_payments (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
   supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL,

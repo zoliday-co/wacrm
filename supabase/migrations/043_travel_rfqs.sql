@@ -12,7 +12,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS rfqs (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   travel_lead_id UUID NOT NULL REFERENCES travel_leads(id) ON DELETE CASCADE,
   requirement_version_id UUID REFERENCES travel_requirement_versions(id) ON DELETE SET NULL,
@@ -56,7 +56,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON rfqs
 -- rfq_suppliers — one row per supplier the RFQ went to.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rfq_suppliers (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   rfq_id UUID NOT NULL REFERENCES rfqs(id) ON DELETE CASCADE,
   supplier_id UUID NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,

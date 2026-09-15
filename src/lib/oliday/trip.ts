@@ -454,7 +454,7 @@ export function deterministicExtract(text: string): Partial<Trip> {
   const star = /^([345])\s*star$/i.exec(lower);
   if (star) out.starCategory = Number(star[1]) as 3 | 4 | 5;
 
-  if (/^(?:no|none|nothing|nope|no (?:specific )?requirements?)\.?$/i.test(t)) {
+  if (/^(?:no|none|nothing|nope|nothing for now|not for now|not at the moment|no (?:specific )?requirements?)\.?$/i.test(t)) {
     out.specificRequirements = 'None';
   }
   if (/^(?:no preference|open to suggestions|you suggest)\.?$/i.test(t)) {
@@ -468,6 +468,48 @@ export function deterministicExtract(text: string): Partial<Trip> {
   else if (/^celebration setup\.?$/i.test(t)) out.specificRequirements = 'Celebration setup';
 
   return out;
+}
+
+export function qualificationRecap(trip: Trip): string {
+  const vehicle: Record<VehicleType, string> = {
+    HATCHBACK: 'Hatchback',
+    SEDAN: 'Sedan',
+    SUV_MUV: 'SUV',
+    TEMPO_TRAVELLER: 'Tempo Traveller',
+    MINI_BUS: 'Mini Bus',
+  };
+  const occupancy: Record<RoomOccupancy, string> = {
+    SINGLE: 'Single rooms',
+    DOUBLE: 'Double sharing',
+    TRIPLE: 'Triple sharing',
+  };
+  const meals: Record<MealPlan, string> = {
+    ROOM_ONLY: 'Room only',
+    BREAKFAST: 'Breakfast',
+    BREAKFAST_DINNER: 'Breakfast + dinner',
+    ALL_MEALS: 'All meals',
+  };
+  const childText = trip.children
+    ? `, ${trip.children} ${trip.children === 1 ? 'child' : 'children'} (age${trip.children === 1 ? '' : 's'} ${(trip.childAges ?? []).join(', ')})`
+    : ', 0 children';
+  const timing = trip.checkInDate
+    ? `${trip.checkInDate}${trip.checkOutDate ? ` to ${trip.checkOutDate}` : ''}`
+    : trip.travelMonth ?? 'Flexible';
+  const requirements = trip.specificRequirements === 'None' ? 'None' : trip.specificRequirements;
+
+  return [
+    'Thank you — your travel requirements have been added successfully.',
+    '',
+    `📍 ${trip.destination}`,
+    `👥 ${trip.adults} ${trip.adults === 1 ? 'adult' : 'adults'}${childText}`,
+    `🌙 ${trip.nights} nights · ${timing}`,
+    `🏨 ${trip.starCategory} star · ${occupancy[trip.roomOccupancy!]} · ${meals[trip.mealPlan!]}`,
+    `🚗 ${vehicle[trip.vehicleType!]}`,
+    `🗺️ ${trip.placesToCover?.join(', ')}`,
+    `📝 Specific requirements: ${requirements}`,
+    '',
+    'We will connect back with you here with quotes for these travel requirements.',
+  ].join('\n');
 }
 
 /**
