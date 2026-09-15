@@ -36,7 +36,7 @@ vi.mock("@supabase/ssr", () => ({
 }));
 
 // Imported after the mock is registered.
-const { middleware } = await import("./middleware");
+const { proxy: middleware } = await import("./proxy");
 
 beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
@@ -96,6 +96,31 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
 
     expect(res.headers.get("location")).toContain("/join/abc123");
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+  });
+
+  it("401s a cookieless request to /api/whatsapp/* with no bearer header", async () => {
+    mockUser = null;
+
+    const res = await middleware(
+      new NextRequest("https://app.test/api/whatsapp/send"),
+    );
+
+    expect(res.status).toBe(401);
+  });
+
+  it("lets a cookieless Bearer request through to /api/whatsapp/* routes", async () => {
+    // The Android app authenticates with an Authorization header, not
+    // cookies — middleware must defer to the route's own JWT validation.
+    mockUser = null;
+
+    const res = await middleware(
+      new NextRequest("https://app.test/api/whatsapp/send", {
+        headers: { authorization: "Bearer some.jwt.token" },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
   });
 
   it("passes through (no redirect) for a signed-in user on a protected page", async () => {

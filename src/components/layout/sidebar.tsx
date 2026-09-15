@@ -25,6 +25,14 @@ import {
   Workflow,
   X,
   Zap,
+  BookOpenCheck,
+  ClipboardList,
+  Handshake,
+  MapPinned,
+  Plane,
+  ReceiptIndianRupee,
+  BarChart3,
+  ListTodo,
 } from "lucide-react";
 import type { AccountRole } from "@/lib/auth/roles";
 
@@ -92,6 +100,14 @@ interface NavItem {
 const navItems: NavItem[] = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
   { href: "/inbox", labelKey: "inbox", icon: MessageSquare },
+  { href: "/leads", labelKey: "leads", icon: Plane },
+  { href: "/rfqs", labelKey: "rfqs", icon: ClipboardList },
+  { href: "/bookings", labelKey: "bookings", icon: BookOpenCheck },
+  { href: "/suppliers", labelKey: "suppliers", icon: Handshake },
+  { href: "/itineraries", labelKey: "itineraries", icon: MapPinned },
+  { href: "/followups", labelKey: "followups", icon: ListTodo },
+  { href: "/payments", labelKey: "payments", icon: ReceiptIndianRupee },
+  { href: "/reports", labelKey: "reports", icon: BarChart3 },
   { href: "/notifications", labelKey: "notifications", icon: Bell },
   { href: "/contacts", labelKey: "contacts", icon: Users },
   { href: "/pipelines", labelKey: "pipelines", icon: GitBranch },
@@ -192,7 +208,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               <MessageSquare className="h-4 w-4" />
             </div>
             <span className="text-sm font-semibold text-foreground">
-              {t("title")}
+              Oliday CRM
             </span>
           </Link>
           <button

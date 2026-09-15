@@ -138,6 +138,16 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType }[] = [
   { value: "conversation_assigned" },
   { value: "tag_added" },
   { value: "time_based" },
+  // Oliday travel lifecycle
+  { value: "travel_lead_qualified" },
+  { value: "travel_rfq_sent" },
+  { value: "supplier_quote_received" },
+  { value: "minimum_supplier_quotes_received" },
+  { value: "traveller_callback_requested" },
+  { value: "traveller_quote_sent" },
+  { value: "traveller_quote_accepted" },
+  { value: "booking_created" },
+  { value: "payment_due" },
 ]
 
 function cid(): string {

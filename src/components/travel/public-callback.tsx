@@ -1,0 +1,15 @@
+'use client';
+
+import { FormEvent, useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+
+interface CallbackView { traveller_first_name: string | null; destination: string | null; nights: number | null; travel_month: string | null; already_requested: boolean }
+export function PublicCallback({ token }: { token: string }) {
+  const endpoint = `/api/public/travel/callback/${encodeURIComponent(token)}`; const [view, setView] = useState<CallbackView | null>(null); const [error, setError] = useState<string | null>(null); const [done, setDone] = useState(false);
+  useEffect(() => { void fetch(endpoint).then(async (r) => { const b = await r.json() as CallbackView & { error?: string }; if (!r.ok) throw new Error(b.error ?? 'This callback link is unavailable'); setView(b); }).catch((e: Error) => setError(e.message)); }, [endpoint]);
+  async function submit(e: FormEvent<HTMLFormElement>) { e.preventDefault(); const data = new FormData(e.currentTarget); const r = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.fromEntries(data.entries())) }); const b = await r.json() as { error?: string }; if (!r.ok) setError(b.error ?? 'Could not request callback'); else setDone(true); }
+  return <main className="flex min-h-screen items-center justify-center bg-muted/30 p-4"><Card className="w-full max-w-xl"><CardHeader><p className="text-sm font-medium text-primary">Oliday travel expert</p><CardTitle className="text-2xl">{done ? 'Your call is scheduled' : `Let’s talk about your ${view?.destination ?? 'trip'}`}</CardTitle></CardHeader><CardContent>{error ? <p className="mb-3 text-sm text-destructive">{error}</p> : null}{!view ? <p>Checking your secure link…</p> : done ? <p className="text-muted-foreground">Thanks {view.traveller_first_name ?? ''}. Your travel expert has been notified and will call at your chosen time.</p> : <form onSubmit={submit} className="space-y-4"><p className="text-sm text-muted-foreground">{view.travel_month ?? 'Flexible dates'}{view.nights ? ` · ${view.nights} nights` : ''}</p><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{[['NOW','Call me now'],['MORNING','Morning'],['AFTERNOON','Afternoon'],['EVENING','Evening']].map(([value,label]) => <label key={value} className="cursor-pointer rounded-lg border p-3 text-center text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/10"><input required className="sr-only" type="radio" name="time_window" value={value} />{label}</label>)}</div><Input required name="preferred_date" type="date" min={new Date().toISOString().slice(0,10)} defaultValue={new Date().toISOString().slice(0,10)} /><Textarea name="note" placeholder="Anything your expert should know?" /><Button className="w-full" size="lg">Request callback</Button></form>}</CardContent></Card></main>;
+}

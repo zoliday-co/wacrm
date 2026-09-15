@@ -21,7 +21,12 @@ export type RoomOccupancy = 'SINGLE' | 'DOUBLE' | 'TRIPLE';
 export type MealPlan =
   'ROOM_ONLY' | 'BREAKFAST' | 'BREAKFAST_DINNER' | 'ALL_MEALS';
 
-export type VehicleType = 'SEDAN' | 'SUV_MUV' | 'TEMPO_TRAVELLER' | 'MINI_BUS';
+export type VehicleType =
+  | 'HATCHBACK'
+  | 'SEDAN'
+  | 'SUV_MUV'
+  | 'TEMPO_TRAVELLER'
+  | 'MINI_BUS';
 
 export interface Trip {
   destination?: string; // as asked (city or region)
@@ -34,10 +39,22 @@ export interface Trip {
   tripType?: TripType;
   adults?: number;
   children?: number;
+  childAges?: number[];
   roomOccupancy?: RoomOccupancy;
   mealPlan?: MealPlan;
   vehicleType?: VehicleType;
   starCategory?: 3 | 4 | 5;
+  /** Cities, sights, or areas the traveller explicitly wants included. */
+  placesToCover?: string[];
+  /** "None" is a valid answer and marks this qualification slot complete. */
+  specificRequirements?: string;
+  /** CRM ingestion marker. Kept in the trip JSON so webhook retries and
+   *  future messages cannot create another lead for the same enquiry. */
+  crmLeadId?: string;
+  crmQualifiedAt?: string;
+  /** Internal marker so an automatically chosen vehicle is recalculated
+   *  when the passenger count changes. */
+  _vehicleAuto?: boolean;
   /** A different callback number the traveller gave for the booking
    *  recap (their WhatsApp number is known implicitly). */
   altPhone?: string;
@@ -74,6 +91,7 @@ const MEAL_PLANS = new Set<string>([
   'ALL_MEALS',
 ]);
 const VEHICLES = new Set<string>([
+  'HATCHBACK',
   'SEDAN',
   'SUV_MUV',
   'TEMPO_TRAVELLER',
@@ -129,7 +147,17 @@ export function mergeTrip(current: Trip, extracted: unknown): Trip {
   const adults = asInt(e.adults, 1, 50);
   if (adults !== undefined) next.adults = adults;
   const children = asInt(e.children, 0, 20);
-  if (children !== undefined) next.children = children;
+  if (children !== undefined) {
+    next.children = children;
+    if (children === 0) next.childAges = [];
+  }
+  if (Array.isArray(e.childAges)) {
+    const ages = e.childAges
+      .map((v) => asInt(v, 0, 17))
+      .filter((v): v is number => v !== undefined)
+      .slice(0, next.children ?? 20);
+    if (ages.length || next.children === 0) next.childAges = ages;
+  }
   if (typeof e.roomOccupancy === 'string' && OCCUPANCIES.has(e.roomOccupancy)) {
     next.roomOccupancy = e.roomOccupancy as RoomOccupancy;
   }
@@ -138,9 +166,27 @@ export function mergeTrip(current: Trip, extracted: unknown): Trip {
   }
   if (typeof e.vehicleType === 'string' && VEHICLES.has(e.vehicleType)) {
     next.vehicleType = e.vehicleType as VehicleType;
+    next._vehicleAuto = false;
   }
   const star = asInt(e.starCategory, 3, 5);
   if (star === 3 || star === 4 || star === 5) next.starCategory = star;
+  if (Array.isArray(e.placesToCover)) {
+    const places = e.placesToCover
+      .filter((v): v is string => typeof v === 'string')
+      .map((v) => v.trim().slice(0, 100))
+      .filter(Boolean)
+      .slice(0, 20);
+    if (places.length) next.placesToCover = [...new Set(places)];
+  } else if (typeof e.placesToCover === 'string' && e.placesToCover.trim()) {
+    next.placesToCover = e.placesToCover
+      .split(/[,;\n]|\band\b/i)
+      .map((v) => v.trim().slice(0, 100))
+      .filter(Boolean)
+      .slice(0, 20);
+  }
+  if (typeof e.specificRequirements === 'string' && e.specificRequirements.trim()) {
+    next.specificRequirements = e.specificRequirements.trim().slice(0, 2000);
+  }
   // Alternate callback number for the booking recap — keep only
   // phone-shaped input (digits with optional +, separators allowed).
   if (typeof e.altPhone === 'string') {
@@ -164,6 +210,13 @@ export function mergeTrip(current: Trip, extracted: unknown): Trip {
     const b = new Date(`${next.checkOutDate}T00:00:00Z`).getTime();
     const diff = Math.round((b - a) / 86_400_000);
     if (diff >= 1 && diff <= 30) next.nights = diff;
+  }
+
+  // A practical default that is consistent for the CRM and supplier RFQ.
+  // The traveller can still explicitly ask for a larger vehicle.
+  if ((!next.vehicleType || next._vehicleAuto) && next.adults !== undefined && next.children !== undefined) {
+    next.vehicleType = recommendedVehicleForPax(totalPax(next)!);
+    next._vehicleAuto = true;
   }
 
   return next;
@@ -250,42 +303,56 @@ export function derivedRooms(trip: Trip): number | undefined {
 /** Vehicle classes sized to the group — a couple never sees "Mini
  *  bus"; 10 people never see "Sedan". */
 export function vehicleOptionsForPax(pax: number): VehicleType[] {
+  if (pax <= 2) return ['HATCHBACK', 'SEDAN'];
   if (pax <= 4) return ['SEDAN', 'SUV_MUV'];
   if (pax <= 6) return ['SUV_MUV', 'TEMPO_TRAVELLER'];
   if (pax <= 12) return ['TEMPO_TRAVELLER', 'MINI_BUS'];
   return ['MINI_BUS'];
 }
 
+/** Vehicle automatically selected from total passenger count. */
+export function recommendedVehicleForPax(pax: number): VehicleType {
+  if (pax <= 2) return 'HATCHBACK';
+  if (pax <= 4) return 'SEDAN';
+  return 'SUV_MUV';
+}
+
 /**
  * The qualification slot order (§6). `dates` covers the
  * dateFlexibility/checkIn/travelMonth cluster; it's satisfied by ANY
- * of them. Room occupancy / meal plan / vehicle / star are
- * nice-to-haves: packages can be shown before they're filled.
+ * of them. Vehicle is derived from passenger count; every other slot
+ * listed here must be known before CRM ingestion.
  */
 export type SlotName =
   | 'destination'
   | 'dates'
   | 'nights'
-  | 'tripType'
   | 'pax'
+  | 'childAges'
   | 'roomOccupancy'
   | 'mealPlan'
-  | 'vehicleType'
-  | 'starCategory';
+  | 'starCategory'
+  | 'placesToCover'
+  | 'specificRequirements';
 
 export function nextMissingSlot(trip: Trip): SlotName | null {
   if (!trip.destination) return 'destination';
+  if (trip.adults === undefined || trip.children === undefined) return 'pax';
+  if (trip.children > 0 && trip.childAges?.length !== trip.children) return 'childAges';
+  if (trip.nights === undefined) return 'nights';
   if (!trip.dateFlexibility && !trip.checkInDate && !trip.travelMonth) {
     return 'dates';
   }
-  if (trip.nights === undefined) return 'nights';
-  if (!trip.tripType) return 'tripType';
-  if (trip.adults === undefined) return 'pax';
+  if (!trip.starCategory) return 'starCategory';
   if (!trip.roomOccupancy) return 'roomOccupancy';
   if (!trip.mealPlan) return 'mealPlan';
-  if (!trip.vehicleType) return 'vehicleType';
-  if (!trip.starCategory) return 'starCategory';
+  if (!trip.placesToCover?.length) return 'placesToCover';
+  if (!trip.specificRequirements) return 'specificRequirements';
   return null;
+}
+
+export function isQualifiedTrip(trip: Trip): boolean {
+  return nextMissingSlot(trip) === null;
 }
 
 /** Enough to usefully search: destination + nights + rough pax (§6:
@@ -331,9 +398,19 @@ export function deterministicExtract(text: string): Partial<Trip> {
 
   // Party size: "2 adults", "1 kid"/"1 child"; bare "2 of us".
   const adults = /(\d{1,2})\s*adults?\b/i.exec(t);
-  if (adults) out.adults = Number(adults[1]);
+  if (adults) {
+    out.adults = Number(adults[1]);
+    if (!/\b(?:kids?|child(?:ren)?)\b/i.test(t)) out.children = 0;
+  }
   const children = /(\d{1,2})\s*(?:kids?|child(?:ren)?)\b/i.exec(t);
   if (children) out.children = Number(children[1]);
+  if (/\b(?:age|ages|aged)\b/i.test(t)) {
+    const agePart = t.slice(Math.max(0, t.search(/\b(?:age|ages|aged)\b/i)));
+    const ages = [...agePart.matchAll(/\b(\d{1,2})\b/g)]
+      .map((m) => Number(m[1]))
+      .filter((n) => n >= 0 && n <= 17);
+    if (ages.length) out.childAges = ages;
+  }
 
   // Trip type buttons.
   if (lower === 'honeymoon') out.tripType = 'HONEYMOON';
@@ -344,14 +421,17 @@ export function deterministicExtract(text: string): Partial<Trip> {
   // Room occupancy buttons.
   if (lower.startsWith('double sharing')) out.roomOccupancy = 'DOUBLE';
   else if (lower.startsWith('triple sharing')) out.roomOccupancy = 'TRIPLE';
+  else if (lower.startsWith('single')) out.roomOccupancy = 'SINGLE';
 
   // Meal plan buttons.
   if (lower === 'breakfast') out.mealPlan = 'BREAKFAST';
+  else if (lower === 'room only') out.mealPlan = 'ROOM_ONLY';
   else if (lower === 'breakfast + dinner') out.mealPlan = 'BREAKFAST_DINNER';
   else if (lower === 'all meals') out.mealPlan = 'ALL_MEALS';
 
   // Vehicle buttons ("Sedan (4 seats)", "SUV (6 seats)", ...).
   if (lower.startsWith('sedan')) out.vehicleType = 'SEDAN';
+  else if (lower.startsWith('hatchback')) out.vehicleType = 'HATCHBACK';
   else if (lower.startsWith('suv')) out.vehicleType = 'SUV_MUV';
   else if (lower.startsWith('tempo')) out.vehicleType = 'TEMPO_TRAVELLER';
   else if (lower.startsWith('mini bus')) out.vehicleType = 'MINI_BUS';
@@ -359,6 +439,13 @@ export function deterministicExtract(text: string): Partial<Trip> {
   // Star buttons.
   const star = /^([345])\s*star$/i.exec(lower);
   if (star) out.starCategory = Number(star[1]) as 3 | 4 | 5;
+
+  if (/^(?:no|none|nothing|nope|no (?:specific )?requirements?)\.?$/i.test(t)) {
+    out.specificRequirements = 'None';
+  }
+  if (/^(?:no preference|open to suggestions|you suggest)\.?$/i.test(t)) {
+    out.placesToCover = ['Open to suggestions'];
+  }
 
   return out;
 }
@@ -390,43 +477,40 @@ export function fallbackQuestion(trip: Trip): {
         text: 'How many nights are you thinking?',
         options: ['4 nights', '5 nights', '6+ nights'],
       };
-    case 'tripType':
-      return {
-        text: 'Who’s travelling — is this a honeymoon, a family trip, or a getaway with friends?',
-        options: ['Honeymoon', 'Family', 'Friends'],
-      };
     case 'pax':
       return {
-        text: 'How many of you will be travelling? (adults + kids)',
+        text: 'How many adults and children will be travelling? Please include 0 children if it is adults only.',
         options: [],
       };
-    case 'roomOccupancy':
+    case 'childAges':
       return {
-        text: 'Room-wise, would you prefer double sharing or triple sharing?',
-        options: ['Double sharing', 'Triple sharing'],
+        text: `What ${trip.children === 1 ? 'is the child’s age' : `are the ages of the ${trip.children} children`}?`,
+        options: [],
       };
-    case 'mealPlan':
-      return {
-        text: 'For meals — breakfast only, breakfast + dinner, or all meals?',
-        options: ['Breakfast', 'Breakfast + dinner', 'All meals'],
-      };
-    case 'vehicleType': {
-      const pax = totalPax(trip) ?? 2;
-      const labels: Record<VehicleType, string> = {
-        SEDAN: 'Sedan (4 seats)',
-        SUV_MUV: 'SUV (6 seats)',
-        TEMPO_TRAVELLER: 'Tempo (12 seats)',
-        MINI_BUS: 'Mini bus',
-      };
-      return {
-        text: 'And for getting around — which vehicle works for your group?',
-        options: vehicleOptionsForPax(pax).map((v) => labels[v]),
-      };
-    }
     case 'starCategory':
       return {
         text: 'Hotel-wise, what are you leaning towards — 3★ comfortable, 4★ premium, or 5★ luxury?',
         options: ['3 star', '4 star', '5 star'],
+      };
+    case 'roomOccupancy':
+      return {
+        text: 'How would you like the rooms shared?',
+        options: ['Double sharing', 'Triple sharing', 'Single rooms'],
+      };
+    case 'mealPlan':
+      return {
+        text: 'Which meal plan would you prefer?',
+        options: ['Room only', 'Breakfast', 'Breakfast + dinner', 'All meals'],
+      };
+    case 'placesToCover':
+      return {
+        text: 'Which places or sights would you definitely like included in the itinerary?',
+        options: [],
+      };
+    case 'specificRequirements':
+      return {
+        text: 'Any specific requirements I should note, such as accessibility, food, room, or celebration needs?',
+        options: ['No requirements'],
       };
     default:
       return {

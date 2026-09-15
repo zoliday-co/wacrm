@@ -15,6 +15,13 @@ import { toast } from "sonner";
 // (conversation_assigned) but this keeps future types a one-line add.
 const TYPE_ICON: Record<Notification["type"], typeof Bell> = {
   conversation_assigned: UserPlus,
+  travel_lead_assigned: UserPlus,
+  travel_callback_requested: Bell,
+  travel_supplier_quote_received: Bell,
+  travel_quotes_ready: Bell,
+  travel_quote_accepted: Bell,
+  travel_task_due: Bell,
+  travel_quote_approval_requested: Bell,
 };
 
 export default function NotificationsPage() {
@@ -114,7 +121,9 @@ export default function NotificationsPage() {
   const handleClick = useCallback(
     (n: Notification) => {
       if (!n.read_at) markRead(n.id);
-      if (n.conversation_id) {
+      if (n.travel_lead_id) {
+        router.push(`/leads/${n.travel_lead_id}`);
+      } else if (n.conversation_id) {
         router.push(`/inbox?c=${n.conversation_id}`);
       }
     },

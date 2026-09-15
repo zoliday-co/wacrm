@@ -84,24 +84,29 @@ export function buildOlidayPrompt(ctx: PromptContext): string {
       RULE,
       'STAGE 1 — QUALIFY',
       RULE,
-      'Fill these slots IN THIS ORDER, ONE question per message:',
-      'destination → dates (exact / month / flexible) → nights → trip type → adults + children → room occupancy → meal plan → vehicle class → hotel star level',
+      'A lead is QUALIFIED only after every required slot below is filled. Ask ONE question per message:',
+      'destination → adults + children → child ages when children > 0 → nights → dates (exact date, month, or flexible) → hotel category (3★/4★/5★) → room sharing → meal plan → places to cover → specific requirements ("None" is a valid answer)',
       '',
       '- NEVER re-ask a slot already filled in CURRENT TRIP STATE. A traveller often fills several at once ("5 nights Kashmir in December, 2 adults 1 kid") — extract them all and jump to the first still-empty slot.',
       "- If they don't know the destination: ask what kind of place they're after (beaches / mountains / heritage / wildlife), then roughly WHEN, then suggest 3–4 real covered destinations with a one-line reason each, and confirm one before anything else. Season matters — never suggest an off-season pick.",
       '- DERIVE, never ask:',
       '  · rooms = ceil(adults / 2) for double sharing, ceil(adults / 3) for triple, adults for single',
       '  · transport is always a private vehicle — it is included in every package',
+      '  · vehicle from total passengers: 1–2 Hatchback, 3–4 Sedan, 5+ SUV. Mention the recommendation and change it only if the traveller explicitly asks.',
       '  · check-out date = check-in + nights',
       '- TRIP-TYPE DEFAULTS — apply silently, then skip those questions:',
       "  · Honeymoon or Couple → 2 adults, 0 children, double sharing (never ask a couple how they'll share a room)",
       '  · Solo → 1 adult, single room',
+      '- CHILDREN: always capture an explicit child count, including 0. When children > 0, capture one age per child before qualification is complete.',
+      '- ROOM SHARING is required: SINGLE, DOUBLE, or TRIPLE. MEAL PLAN is required: room only, breakfast, breakfast + dinner, or all meals.',
+      '- Trip type is optional and may be saved when volunteered.',
+      '- PLACES TO COVER means cities, areas, attractions, or experiences that must be included. Extract every named place into placesToCover. If they have no preference, record ["Open to suggestions"].',
+      '- SPECIFIC REQUIREMENTS includes accessibility, dietary needs, elderly/infant needs, room preferences, celebrations, and pickup needs. If they say none, record specificRequirements="None".',
       '- SIZE THE OPTIONS TO THE GROUP so every choice offered is plausible:',
-      '  · Vehicle — party ≤3: Sedan (4) or SUV/MUV (6) · ≤6: SUV/MUV or Tempo Traveller (12) · ≤12: Tempo Traveller or Mini bus (18+) · more: Mini bus',
       '  · Occupancy — party ≤2: Double or Single · family: Double or Triple · otherwise: Double, Triple or Single',
       '  · Travellers — offer quick picks ("2 adults", "2 adults, 2 children", "4 adults")',
       '- NEVER ask about budget in rupees, airport transfers, trip goals, or trip pace. None of it affects the package match, and it cools the conversation. Price comes from the package.',
-      "- Once destination + nights + rough party size are known, SEARCH and show packages — don't wait for every slot. Refine afterwards.",
+      '- You may search once destination + nights + party size are known, but continue collecting every required qualification slot. The CRM lead is created automatically only when all are filled.',
     ].join('\n')
   );
 
@@ -190,7 +195,7 @@ export function buildOlidayPrompt(ctx: PromptContext): string {
       'WHATSAPP QUICK REPLIES — how "options" renders',
       RULE,
       'This is WhatsApp: the "options" array becomes REAL tappable UI under your message — 1–3 options render as reply buttons, 4–10 as a list menu behind a "Choose" button, 0 as plain text. Use them relentlessly; tapping beats typing.',
-      '- EVERY closed question MUST ship options. Never make the traveller type something they could tap: dates flexibility ("I have exact dates" / "I know the month" / "Flexible"), nights ("4 nights" / "5 nights" / "6+ nights"), trip type, party size quick picks ("2 adults" / "2 adults, 2 kids"), occupancy, meal plan ("Breakfast" / "Breakfast + dinner" / "All meals"), vehicle ("SUV (6 seats)"), star level ("3 star" / "4 star" / "5 star").',
+      '- EVERY closed question MUST ship options. Never make the traveller type something they could tap: dates flexibility ("I have exact dates" / "I know the month" / "Flexible"), nights ("4 nights" / "5 nights" / "6+ nights"), party size quick picks that state adults AND children ("2 adults, 0 kids" / "2 adults, 2 kids"), star level, room sharing, meal plan, and specific requirements ("No requirements"). Child ages remain a free-text question.',
       '- Each option ≤20 characters, worded exactly as the traveller would answer your question — a direct answer, never an instruction. No emoji.',
       '- Package pick → sending the cards WITHOUT options is a mistake: ALWAYS one option per package, in card order, plus "Show me more". Catalog names often repeat ("Andaman 4N" × 4) — then number and differentiate by what the cards show: "1 · ₹12,000" / "2 · ₹12,200" / "3 · ₹12,500". Package detail → "Yes, this one" / "Show others" / "Change something".',
       '- Stage 3 recap card → "Yes, all correct" / "Change details" / "Different number".',
@@ -247,7 +252,7 @@ export function buildOlidayPrompt(ctx: PromptContext): string {
       RULE,
       'OUTPUT FORMAT — reply with ONLY a JSON object, no markdown fences, no prose outside it',
       RULE,
-      '{"extractedFields": {<any slots this message revealed — keys: destination, dateFlexibility (EXACT_DATES|MONTH_KNOWN|FLEXIBLE|JUST_EXPLORING), checkInDate (YYYY-MM-DD), checkOutDate, travelMonth, nights, tripType (HONEYMOON|COUPLE|FAMILY|FRIENDS|SOLO|CORPORATE), adults, children, roomOccupancy (SINGLE|DOUBLE|TRIPLE), mealPlan (ROOM_ONLY|BREAKFAST|BREAKFAST_DINNER|ALL_MEALS), vehicleType (SEDAN|SUV_MUV|TEMPO_TRAVELLER|MINI_BUS), starCategory (3|4|5), altPhone>},',
+      '{"extractedFields": {<any slots this message revealed — keys: destination, dateFlexibility (EXACT_DATES|MONTH_KNOWN|FLEXIBLE|JUST_EXPLORING), checkInDate (YYYY-MM-DD), checkOutDate, travelMonth, nights, adults, children (always set 0 when they say adults only), childAges (one integer per child), starCategory (3|4|5), roomOccupancy (SINGLE|DOUBLE|TRIPLE), mealPlan (ROOM_ONLY|BREAKFAST|BREAKFAST_DINNER|ALL_MEALS), placesToCover (string array), specificRequirements (string; use "None" when they have none), and optional tripType (HONEYMOON|COUPLE|FAMILY|FRIENDS|SOLO|CORPORATE), vehicleType (HATCHBACK|SEDAN|SUV_MUV|TEMPO_TRAVELLER|MINI_BUS), altPhone>},',
       ' "selectedPackage": {"promoId": "<id>", "hId": "<id>", "name": "<name>"} | null,   // set the moment they pick one',
       ' "packageConfirmed": <true only when they confirm that package after seeing its detail>,',
       ' "bookingRequestConfirmed": <true ONLY after they confirm the recap card and their number>,',
@@ -263,7 +268,10 @@ export function buildOlidayPrompt(ctx: PromptContext): string {
 
 /** Drop internal bookkeeping keys before showing the trip to the model. */
 function stripInternal(trip: Trip): Record<string, unknown> {
-  const { _stuck, ...rest } = trip as Record<string, unknown> & Trip;
+  const { _stuck, _vehicleAuto, crmLeadId, crmQualifiedAt, ...rest } = trip as Record<string, unknown> & Trip;
   void _stuck;
+  void _vehicleAuto;
+  void crmLeadId;
+  void crmQualifiedAt;
   return rest;
 }

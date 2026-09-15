@@ -181,13 +181,23 @@ export interface Conversation {
   ai_autoreply_disabled?: boolean;
   ai_reply_count?: number;
   ai_handoff_summary?: string | null;
+  /** Latest travel lead opened from this thread (migration 048). */
+  travel_lead_id?: string | null;
 }
 
 // ============================================================
 // Notifications (migration 027)
 // ============================================================
 
-export type NotificationType = 'conversation_assigned';
+export type NotificationType =
+  | 'conversation_assigned'
+  | 'travel_lead_assigned'
+  | 'travel_callback_requested'
+  | 'travel_supplier_quote_received'
+  | 'travel_quotes_ready'
+  | 'travel_quote_accepted'
+  | 'travel_task_due'
+  | 'travel_quote_approval_requested';
 
 export interface Notification {
   id: string;
@@ -197,6 +207,8 @@ export interface Notification {
   type: NotificationType;
   conversation_id?: string;
   contact_id?: string;
+  /** Travel lead this notification is about (migration 048). */
+  travel_lead_id?: string | null;
   /** Who triggered it. Null when an automation/system assigned it. */
   actor_user_id?: string;
   title: string;
@@ -348,6 +360,9 @@ export interface PipelineStage {
   name: string;
   position: number;
   color: string;
+  /** Machine key for stage lookups (migration 041). Set on the Oliday
+   *  travel pipeline (e.g. 'QUALIFIED'); NULL on user-made stages. */
+  stage_key?: string | null;
   created_at: string;
 }
 
@@ -439,7 +454,17 @@ export type AutomationTriggerType =
   | 'time_based'
   /** Customer tapped a reply button / list row whose id matches; lets
    *  multi-step menus be chained across automations. */
-  | 'interactive_reply';
+  | 'interactive_reply'
+  // Oliday travel lifecycle triggers (dispatched by src/lib/travel/events.ts)
+  | 'travel_lead_qualified'
+  | 'travel_rfq_sent'
+  | 'supplier_quote_received'
+  | 'minimum_supplier_quotes_received'
+  | 'traveller_callback_requested'
+  | 'traveller_quote_sent'
+  | 'traveller_quote_accepted'
+  | 'booking_created'
+  | 'payment_due';
 
 export type AutomationStepType =
   | 'send_message'
@@ -646,3 +671,8 @@ export interface QuickReply {
   created_at: string;
   updated_at: string;
 }
+
+// ============================================================
+// Oliday travel layer (migrations 041–048)
+// ============================================================
+export * from "./travel";

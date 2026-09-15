@@ -100,6 +100,7 @@ const RESULT_LIMIT = 5;
 /** Keywords per vehicle class, matched against the free-text
  *  `vehicle_type` column. */
 const VEHICLE_KEYWORDS: Record<VehicleType, string[]> = {
+  HATCHBACK: ['hatchback', 'wagon r', 'swift', 'i10', 'i20'],
   SEDAN: ['sedan', 'hatchback', 'dzire', 'etios'],
   SUV_MUV: ['suv', 'muv', 'innova', 'ertiga', 'crysta'],
   TEMPO_TRAVELLER: ['tempo', 'traveller', 'traveler'],

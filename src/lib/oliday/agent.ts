@@ -56,8 +56,10 @@ import {
   mergeStage,
   fallbackQuestion,
   deterministicExtract,
+  isQualifiedTrip,
   type Trip,
 } from './trip';
+import { syncQualifiedTripToCrm } from './qualified-lead';
 
 // Re-exported so callers (webhook dispatch, tests) keep one import
 // point for the agent surface.
@@ -99,7 +101,7 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     // ---- Load bot state ----------------------------------------
     const { data: conv } = await db
       .from('conversations')
-      .select('trip, shown_packages, entry_context, vibes')
+      .select('trip, shown_packages, entry_context, vibes, travel_lead_id')
       .eq('id', conversationId)
       .maybeSingle();
     let trip: Trip = (conv?.trip as Trip) ?? {};
@@ -193,7 +195,7 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     // The phone feeds the Stage 3 recap card (shown back, never asked).
     const { data: contactRow } = await db
       .from('contacts')
-      .select('referral, phone')
+      .select('referral, phone, name')
       .eq('id', contactId)
       .maybeSingle();
     const adHeadline =
@@ -244,6 +246,19 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
       // the loop PROGRESSES through the slots instead of re-asking
       // the same one.
       trip = mergeTrip(trip, deterministicExtract(inbound.text));
+      trip = await maybeSyncQualifiedTrip({
+        db,
+        accountId,
+        conversationId,
+        contactName: typeof contactRow?.name === 'string' ? contactRow.name : null,
+        phone,
+        referral:
+          contactRow?.referral && typeof contactRow.referral === 'object'
+            ? (contactRow.referral as Record<string, unknown>)
+            : null,
+        existingLeadId: typeof conv?.travel_lead_id === 'string' ? conv.travel_lead_id : null,
+        trip,
+      });
       await persistTrip(db, conversationId, trip, null);
       const q = fallbackQuestion(trip);
       if (!(await claimSlot(db, conversationId))) return;
@@ -254,6 +269,23 @@ export async function runOlidayTurn(args: OlidayTurnArgs): Promise<void> {
     // ---- Merge extraction + stage progress ---------------------
     trip = mergeTrip(trip, result.parsed.extractedFields);
     trip = mergeStage(trip, result.parsed);
+
+    // Qualification and CRM ingestion are driven by validated state,
+    // never by an LLM flag. The deterministic idempotency key makes a
+    // repeated Meta delivery safe.
+    trip = await maybeSyncQualifiedTrip({
+      db,
+      accountId,
+      conversationId,
+      contactName: typeof contactRow?.name === 'string' ? contactRow.name : null,
+      phone,
+      referral:
+        contactRow?.referral && typeof contactRow.referral === 'object'
+          ? (contactRow.referral as Record<string, unknown>)
+          : null,
+      existingLeadId: typeof conv?.travel_lead_id === 'string' ? conv.travel_lead_id : null,
+      trip,
+    });
 
     // Advisory only — surfaces in the logs for the team; the bot never
     // pauses itself or assigns anyone (manual takeover from the inbox).
@@ -385,7 +417,7 @@ async function generateTurn(input: {
           },
           vehicleType: {
             type: 'string',
-            enum: ['SEDAN', 'SUV_MUV', 'TEMPO_TRAVELLER', 'MINI_BUS'],
+            enum: ['HATCHBACK', 'SEDAN', 'SUV_MUV', 'TEMPO_TRAVELLER', 'MINI_BUS'],
           },
           // NOTE: no `enum` here — Gemini's schema dialect rejects
           // enums on non-string types with a 400 on EVERY call (the
@@ -416,6 +448,7 @@ async function generateTurn(input: {
             'ALL_MEALS',
           ]),
           vehicleType: enumOrUndef(raw.vehicleType, [
+            'HATCHBACK',
             'SEDAN',
             'SUV_MUV',
             'TEMPO_TRAVELLER',
@@ -503,6 +536,35 @@ async function persistTrip(
     .update(update)
     .eq('id', conversationId);
   if (error) console.error('[oliday] trip persist failed:', error.message);
+}
+
+async function maybeSyncQualifiedTrip(input: {
+  db: SupabaseClient;
+  accountId: string;
+  conversationId: string;
+  contactName: string | null;
+  phone: string | null;
+  referral: Record<string, unknown> | null;
+  existingLeadId: string | null;
+  trip: Trip;
+}): Promise<Trip> {
+  if (input.trip.crmLeadId) return input.trip;
+  if (input.existingLeadId) return { ...input.trip, crmLeadId: input.existingLeadId };
+  if (!input.phone || !isQualifiedTrip(input.trip)) return input.trip;
+  try {
+    const synced = await syncQualifiedTripToCrm({
+      db: input.db,
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      contact: { name: input.contactName, phone: input.phone, referral: input.referral },
+      trip: input.trip,
+    });
+    return { ...input.trip, crmLeadId: synced.leadId, crmQualifiedAt: new Date().toISOString() };
+  } catch (err) {
+    // Keep replying and retry CRM sync on the next inbound message.
+    console.error('[oliday] qualified lead CRM sync failed:', err instanceof Error ? err.message : err);
+    return input.trip;
+  }
 }
 
 function numOrUndef(v: unknown): number | undefined {

@@ -6,6 +6,8 @@ import {
   totalPax,
   derivedRooms,
   vehicleOptionsForPax,
+  recommendedVehicleForPax,
+  isQualifiedTrip,
   fallbackQuestion,
   deterministicExtract,
   type Trip,
@@ -91,15 +93,38 @@ describe('slot order', () => {
     const trip: Trip = {};
     expect(nextMissingSlot(trip)).toBe('destination');
     trip.destination = 'Kashmir';
-    expect(nextMissingSlot(trip)).toBe('dates');
-    trip.travelMonth = 'December 2026';
-    expect(nextMissingSlot(trip)).toBe('nights');
-    trip.nights = 5;
-    expect(nextMissingSlot(trip)).toBe('tripType');
-    trip.tripType = 'FAMILY';
     expect(nextMissingSlot(trip)).toBe('pax');
     trip.adults = 2;
-    expect(nextMissingSlot(trip)).toBe('roomOccupancy');
+    trip.children = 0;
+    expect(nextMissingSlot(trip)).toBe('nights');
+    trip.nights = 5;
+    expect(nextMissingSlot(trip)).toBe('dates');
+    trip.travelMonth = 'December 2026';
+    expect(nextMissingSlot(trip)).toBe('starCategory');
+    trip.starCategory = 4;
+    trip.roomOccupancy = 'DOUBLE';
+    trip.mealPlan = 'BREAKFAST';
+    expect(nextMissingSlot(trip)).toBe('placesToCover');
+    trip.placesToCover = ['Gulmarg', 'Pahalgam'];
+    expect(nextMissingSlot(trip)).toBe('specificRequirements');
+    trip.specificRequirements = 'None';
+    expect(nextMissingSlot(trip)).toBeNull();
+    expect(isQualifiedTrip(trip)).toBe(true);
+  });
+
+  it('requires one age per child plus room sharing and meal plan', () => {
+    const base: Trip = {
+      destination: 'Kerala',
+      adults: 2,
+      children: 2,
+      nights: 4,
+      travelMonth: 'January 2027',
+      starCategory: 4,
+    };
+    expect(nextMissingSlot(base)).toBe('childAges');
+    expect(nextMissingSlot({ ...base, childAges: [6] })).toBe('childAges');
+    expect(nextMissingSlot({ ...base, childAges: [6, 9] })).toBe('roomOccupancy');
+    expect(nextMissingSlot({ ...base, childAges: [6, 9], roomOccupancy: 'DOUBLE' })).toBe('mealPlan');
   });
 });
 
@@ -111,9 +136,22 @@ describe('derivations (asked never, derived always)', () => {
   });
 
   it('vehicle options sized to the group', () => {
-    expect(vehicleOptionsForPax(2)).not.toContain('MINI_BUS');
+    expect(vehicleOptionsForPax(2)).toEqual(['HATCHBACK', 'SEDAN']);
     expect(vehicleOptionsForPax(10)).not.toContain('SEDAN');
     expect(vehicleOptionsForPax(20)).toEqual(['MINI_BUS']);
+  });
+
+  it('recommends hatchback, sedan, or SUV from passenger count', () => {
+    expect(recommendedVehicleForPax(2)).toBe('HATCHBACK');
+    expect(recommendedVehicleForPax(4)).toBe('SEDAN');
+    expect(recommendedVehicleForPax(5)).toBe('SUV_MUV');
+  });
+
+  it('recalculates an automatic vehicle after children are added', () => {
+    const adultsOnly = mergeTrip({}, { adults: 2, children: 0 });
+    expect(adultsOnly.vehicleType).toBe('HATCHBACK');
+    const family = mergeTrip(adultsOnly, { children: 3 });
+    expect(family.vehicleType).toBe('SUV_MUV');
   });
 });
 
@@ -121,7 +159,7 @@ describe('deterministicExtract (LLM-down slot filling)', () => {
   it('consumes a destination button tap (the live "Andaman" regression)', () => {
     const trip = mergeTrip({}, deterministicExtract('Andaman'));
     expect(trip).toMatchObject({ destination: 'Andaman', region: 'Andaman' });
-    expect(nextMissingSlot(trip)).toBe('dates');
+    expect(nextMissingSlot(trip)).toBe('pax');
   });
 
   it('parses free-text shapes: "4n", "5 nights", party sizes', () => {
@@ -157,6 +195,9 @@ describe('deterministicExtract (LLM-down slot filling)', () => {
       vehicleType: 'SUV_MUV',
     });
     expect(deterministicExtract('3 star')).toEqual({ starCategory: 3 });
+    expect(deterministicExtract('No requirements')).toEqual({
+      specificRequirements: 'None',
+    });
   });
 
   it('extracts nothing from unrelated text', () => {
