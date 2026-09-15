@@ -9,6 +9,8 @@ import { StatusBadge } from './status-badge';
 import { DestinationSelect, MAX_SUPPLIER_DESTINATIONS } from './destination-select';
 import type { Destination, Supplier } from '@/types/travel';
 import { SUPPLIER_TYPES } from '@/types/travel';
+import { DEFAULT_DESTINATIONS } from '@/lib/travel/constants';
+import { slugify } from '@/lib/travel/matching';
 
 export function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -80,6 +82,13 @@ export function SuppliersPage() {
     else setError('Only an admin can seed destinations');
   }
 
+  // Which catalog destinations this account is missing. Seeding is
+  // additive and matches on slug, so the button stays useful after the
+  // first run — it tops up whatever the catalog has gained since.
+  const missingDefaults = DEFAULT_DESTINATIONS.filter(
+    (d) => !destinations.some((existing) => existing.slug === slugify(d.name)),
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -89,9 +98,15 @@ export function SuppliersPage() {
             Destination partners available for automatic RFQ matching
           </p>
         </div>
-        {destinations.length === 0 ? (
-          <Button variant="outline" onClick={() => void seedDestinations()}>
-            Add default destinations
+        {missingDefaults.length > 0 ? (
+          <Button
+            variant="outline"
+            onClick={() => void seedDestinations()}
+            title={missingDefaults.map((d) => d.name).join(', ')}
+          >
+            {destinations.length === 0
+              ? 'Add default destinations'
+              : `Add ${missingDefaults.length} missing ${missingDefaults.length === 1 ? 'destination' : 'destinations'}`}
           </Button>
         ) : null}
       </div>

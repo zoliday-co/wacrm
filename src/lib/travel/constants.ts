@@ -138,19 +138,35 @@ export const LEAD_EVENT_TYPES = {
 } as const;
 
 /** Fixed destination choices shown while mapping a supplier. */
-export const SUPPLIER_DESTINATION_OPTIONS = [
-  { label: 'Kerala', slugs: ['kerala'] },
-  { label: 'Andaman', slugs: ['andaman'] },
-  { label: 'Tamilnadu', slugs: ['tamil-nadu', 'tamilnadu'] },
-  { label: 'Karnataka', slugs: ['karnataka'] },
-  { label: 'Maharashtra', slugs: ['maharashtra'] },
-  { label: 'UP', slugs: ['uttar-pradesh', 'up'] },
-  { label: 'Rajasthan', slugs: ['rajasthan'] },
-  { label: 'Himachal', slugs: ['himachal-pradesh', 'himachal'] },
-  { label: 'Uttrakhand', slugs: ['uttarakhand', 'uttrakhand'] },
-  { label: 'North East', slugs: ['north-east'] },
-  { label: 'Kashmir', slugs: ['kashmir'] },
-  { label: 'Ladakh', slugs: ['ladakh'] },
-] as const;
+/**
+ * The destination catalog Oliday sells. Seeded per account on demand
+ * and then owned by the account — an admin can add, rename or retire
+ * rows without touching this list, which only supplies the starting
+ * set and the "add the missing ones" top-up.
+ *
+ * Top-level entries are what the supplier form's dropdown offers as
+ * coverage; children are the sub-destinations an itinerary moves
+ * through, and the matcher treats a supplier mapped to a child as
+ * serving the parent's enquiries too.
+ *
+ * Lives here rather than in `suppliers.ts` so client components can
+ * read it without pulling server-only modules into the bundle.
+ */
+export const DEFAULT_DESTINATIONS: { name: string; children?: string[]; aliases?: string[] }[] = [
+  { name: 'Kerala', children: ['Munnar', 'Thekkady', 'Alleppey', 'Varkala', 'Kochi', 'Wayanad', 'Kovalam'], aliases: ['kerela', "god's own country"] },
+  { name: 'Andaman', children: ['Port Blair', 'Havelock', 'Neil Island'], aliases: ['andaman and nicobar', 'andamans'] },
+  { name: 'Ladakh', children: ['Leh', 'Nubra', 'Pangong'], aliases: ['leh ladakh'] },
+  { name: 'Rajasthan', children: ['Jaipur', 'Udaipur', 'Jodhpur', 'Jaisalmer', 'Pushkar', 'Mount Abu'] },
+  { name: 'Tamil Nadu', children: ['Ooty', 'Kodaikanal', 'Pondicherry', 'Rameswaram'], aliases: ['tamilnadu', 'tn'] },
+  { name: 'Karnataka', children: ['Coorg', 'Chikmagalur', 'Hampi', 'Gokarna', 'Mysore'] },
+  { name: 'Himachal Pradesh', children: ['Manali', 'Shimla', 'Dharamshala', 'Kasol', 'Dalhousie', 'Spiti'], aliases: ['himachal', 'hp'] },
+  { name: 'Gujarat', children: ['Ahmedabad', 'Rann of Kutch', 'Gir', 'Dwarka', 'Somnath', 'Statue of Unity'] },
+  { name: 'Uttarakhand', children: ['Nainital', 'Mussoorie', 'Rishikesh', 'Auli', 'Jim Corbett'], aliases: ['uttrakhand'] },
+  { name: 'Kashmir', children: ['Srinagar', 'Gulmarg', 'Pahalgam', 'Sonamarg'], aliases: ['jammu and kashmir', 'j&k'] },
+  { name: 'North East', children: ['Sikkim', 'Gangtok', 'Darjeeling', 'Meghalaya', 'Shillong', 'Kaziranga'], aliases: ['northeast', 'north-east india'] },
+  { name: 'Goa', children: ['North Goa', 'South Goa'] },
+  { name: 'Maharashtra', children: ['Mumbai', 'Pune', 'Lonavala', 'Mahabaleshwar'] },
+  { name: 'Uttar Pradesh', children: ['Agra', 'Varanasi', 'Lucknow', 'Ayodhya'], aliases: ['up', 'u.p.'] },
+];
 
 export type LeadEventType = (typeof LEAD_EVENT_TYPES)[keyof typeof LEAD_EVENT_TYPES];

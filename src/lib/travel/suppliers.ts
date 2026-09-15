@@ -8,27 +8,13 @@ import type { Destination, Supplier, SupplierDestination, SupplierStatus, Suppli
 import { SUPPLIER_TYPES } from '@/types/travel';
 import { badRequest, notFound } from './errors';
 import { slugify } from './matching';
+import { DEFAULT_DESTINATIONS } from './constants';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
 // ------------------------------------------------------------
 // Destinations
 // ------------------------------------------------------------
 
-export const DEFAULT_DESTINATIONS: { name: string; children?: string[]; aliases?: string[] }[] = [
-  { name: 'Kerala', children: ['Munnar', 'Thekkady', 'Alleppey', 'Varkala', 'Kochi', 'Wayanad', 'Kovalam'], aliases: ['kerela', 'god\'s own country'] },
-  { name: 'Goa', children: ['North Goa', 'South Goa'] },
-  { name: 'Kashmir', children: ['Srinagar', 'Gulmarg', 'Pahalgam', 'Sonamarg'], aliases: ['jammu and kashmir', 'j&k'] },
-  { name: 'Rajasthan', children: ['Jaipur', 'Udaipur', 'Jodhpur', 'Jaisalmer', 'Pushkar', 'Mount Abu'] },
-  { name: 'Himachal Pradesh', children: ['Manali', 'Shimla', 'Dharamshala', 'Kasol', 'Dalhousie', 'Spiti'], aliases: ['himachal'] },
-  { name: 'Uttarakhand', children: ['Nainital', 'Mussoorie', 'Rishikesh', 'Auli', 'Jim Corbett'] },
-  { name: 'Andaman', children: ['Port Blair', 'Havelock', 'Neil Island'], aliases: ['andaman and nicobar', 'andamans'] },
-  { name: 'North East', children: ['Sikkim', 'Gangtok', 'Darjeeling', 'Meghalaya', 'Shillong', 'Kaziranga'], aliases: ['northeast', 'north-east india'] },
-  { name: 'Karnataka', children: ['Coorg', 'Chikmagalur', 'Hampi', 'Gokarna', 'Mysore'] },
-  { name: 'Tamil Nadu', children: ['Ooty', 'Kodaikanal', 'Pondicherry', 'Rameswaram'] },
-  { name: 'Maharashtra', children: ['Mumbai', 'Pune', 'Lonavala', 'Mahabaleshwar'] },
-  { name: 'Uttar Pradesh', children: ['Agra', 'Varanasi', 'Lucknow', 'Ayodhya'], aliases: ['up', 'u.p.'] },
-  { name: 'Ladakh', children: ['Leh', 'Nubra', 'Pangong'], aliases: ['leh ladakh'] },
-];
 
 export async function seedDefaultDestinations(db: SupabaseClient, accountId: string): Promise<number> {
   let created = 0;
@@ -284,4 +270,5 @@ async function replaceSupplierDestinations(
   }
 }
 
+export { DEFAULT_DESTINATIONS };
 export type { SupplierDestination };
