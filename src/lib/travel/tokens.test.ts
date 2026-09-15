@@ -16,6 +16,13 @@ describe('public travel access tokens', () => {
     expect(tokenHashEquals(hash, hashTravelToken('different'))).toBe(false);
   });
 
+  it('generates itinerary share tokens with their own prefix', () => {
+    const generated = generateTravelToken('itinerary', 24, new Date('2026-01-01T00:00:00Z'));
+    expect(generated.token).toMatch(/^it_/);
+    expect(looksLikeTravelToken(generated.token, 'itinerary')).toBe(true);
+    expect(looksLikeTravelToken(generated.token, 'supplier_quote')).toBe(false);
+  });
+
   it('rejects expired and revoked records', () => {
     const now = new Date('2026-01-02T00:00:00Z');
     expect(tokenState({ expires_at: '2026-01-01T00:00:00Z', revoked_at: null }, now)).toBe('expired');

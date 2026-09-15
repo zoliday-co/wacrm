@@ -31,3 +31,7 @@ export function callbackUrl(token: string, request?: Request | null): string {
 export function travellerQuoteUrl(token: string, request?: Request | null): string {
   return `${publicBaseUrl(request)}/q/${encodeURIComponent(token)}`;
 }
+
+export function itineraryUrl(token: string, request?: Request | null): string {
+  return `${publicBaseUrl(request)}/trip/itinerary/${encodeURIComponent(token)}`;
+}

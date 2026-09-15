@@ -27,6 +27,9 @@ export interface ItineraryInput {
   hero_image_url?: string | null;
   traveller_quote_id?: string | null;
   days: ItineraryDayInput[];
+  inclusions?: string | null;
+  exclusions?: string | null;
+  notes?: string | null;
   /** When editing: replace days of this DRAFT itinerary instead of creating a version. */
   itinerary_id?: string | null;
 }
@@ -65,6 +68,9 @@ export function parseItineraryInput(raw: unknown): ItineraryInput {
     traveller_quote_id: typeof s.traveller_quote_id === 'string' && s.traveller_quote_id ? s.traveller_quote_id : null,
     days,
     itinerary_id: typeof s.itinerary_id === 'string' && s.itinerary_id ? s.itinerary_id : null,
+    inclusions: text(s.inclusions),
+    exclusions: text(s.exclusions),
+    notes: text(s.notes),
   };
 }
 
@@ -84,7 +90,7 @@ export async function saveItinerary(
     if ((existing as Itinerary).status !== 'DRAFT') throw badRequest('Only draft itineraries can be edited — create a new version instead');
     const { data, error } = await db
       .from('itineraries')
-      .update({ title: input.title, summary: input.summary ?? null, hero_image_url: input.hero_image_url ?? null, traveller_quote_id: input.traveller_quote_id ?? null })
+      .update({ title: input.title, summary: input.summary ?? null, hero_image_url: input.hero_image_url ?? null, traveller_quote_id: input.traveller_quote_id ?? null, extras: itineraryExtras(input) })
       .eq('id', input.itinerary_id)
       .select('*')
       .single();
@@ -107,6 +113,7 @@ export async function saveItinerary(
         hero_image_url: input.hero_image_url ?? null,
         status: 'DRAFT',
         generated_by: 'manual',
+        extras: itineraryExtras(input),
         created_by: actorUserId,
       })
       .select('*')
@@ -168,10 +175,30 @@ export async function listItineraries(db: SupabaseClient, accountId: string, lea
   return ((data ?? []) as Itinerary[]).map((it) => ({ ...it, days: (it.days ?? []).sort((a, b) => a.day_number - b.day_number) }));
 }
 
-export async function setItineraryStatus(db: SupabaseClient, accountId: string, id: string, status: 'DRAFT' | 'FINAL' | 'ARCHIVED'): Promise<Itinerary> {
+export async function setItineraryStatus(db: SupabaseClient, accountId: string, id: string, status: 'DRAFT' | 'FINAL' | 'ARCHIVED', actorUserId: string | null = null): Promise<Itinerary> {
+  const current = await getItinerary(db, accountId, id);
   const { error } = await db.from('itineraries').update({ status }).eq('id', id).eq('account_id', accountId);
   if (error) throw new Error(`Failed to update itinerary: ${error.message}`);
+  if (status === 'FINAL' && current.status !== 'FINAL') {
+    await recordLeadEvent(db, {
+      accountId,
+      leadId: current.travel_lead_id,
+      type: LEAD_EVENT_TYPES.ITINERARY_FINALIZED,
+      actorType: 'agent',
+      actorUserId,
+      title: `Itinerary V${current.version} finalized — ${current.title}`,
+      details: { itinerary_id: id, version: current.version },
+    });
+  }
   return getItinerary(db, accountId, id);
+}
+
+function itineraryExtras(input: ItineraryInput): Record<string, string | null> {
+  return {
+    inclusions: input.inclusions ?? null,
+    exclusions: input.exclusions ?? null,
+    notes: input.notes ?? null,
+  };
 }
 
 /** Seed a day-per-night skeleton from the lead so agents start from structure, not a blank page. */

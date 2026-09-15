@@ -10,7 +10,7 @@ import { formatMoney } from '@/lib/travel/money';
 import { fmtDate, fmtDateTime } from '@/lib/travel/format';
 
 type Row = Record<string, unknown>;
-type Kind = 'leads' | 'rfqs' | 'bookings' | 'itineraries' | 'payments' | 'followups';
+type Kind = 'leads' | 'rfqs' | 'bookings' | 'itineraries' | 'payments';
 
 const CONFIG: Record<Kind, { title: string; subtitle: string; endpoint: string }> = {
   leads: { title: 'Travel leads', subtitle: 'Qualified WhatsApp enquiries and active sales work', endpoint: '/api/travel/leads?status=all' },
@@ -18,13 +18,11 @@ const CONFIG: Record<Kind, { title: string; subtitle: string; endpoint: string }
   bookings: { title: 'Bookings', subtitle: 'Confirmed trips and their payment position', endpoint: '/api/travel/bookings?status=all' },
   itineraries: { title: 'Itineraries', subtitle: 'All saved itinerary versions', endpoint: '/api/travel/itineraries' },
   payments: { title: 'Payments', subtitle: 'Customer receipts and supplier payouts', endpoint: '/api/travel/payments' },
-  followups: { title: 'Follow-ups', subtitle: 'Calls, callbacks, supplier work and payment tasks', endpoint: '/api/travel/tasks?status=open' },
 };
 
 function rowsFor(kind: Kind, payload: Row): Row[] {
   if (kind === 'payments') return [...((payload.customer as Row[] | undefined) ?? []).map((r) => ({ ...r, payment_kind: 'Customer' })), ...((payload.supplier as Row[] | undefined) ?? []).map((r) => ({ ...r, payment_kind: 'Supplier' }))];
-  const key = kind === 'followups' ? 'tasks' : kind;
-  return (payload[key] as Row[] | undefined) ?? [];
+  return (payload[kind] as Row[] | undefined) ?? [];
 }
 
 function text(row: Row, ...keys: string[]) {
@@ -49,7 +47,7 @@ export function TravelListPage({ kind }: { kind: Kind }) {
     {error ? <Card><CardContent className="text-destructive">{error}</CardContent></Card> : rows === null ? <div className="flex h-48 items-center justify-center"><Loader2 className="animate-spin" /></div> : rows.length === 0 ? <Card><CardContent className="py-12 text-center text-muted-foreground">No records yet. New activity will appear here automatically.</CardContent></Card> : <div className="grid gap-3">
       {rows.map((row) => {
         const id = String(row.id);
-        const title = kind === 'leads' ? text(row, 'traveller_name') ?? 'Unnamed traveller' : kind === 'bookings' ? text(row, 'booking_number') ?? 'Booking' : kind === 'rfqs' ? `RFQ V${String(row.version ?? 1)}` : kind === 'itineraries' ? text(row, 'title') ?? 'Itinerary' : kind === 'followups' ? text(row, 'title') ?? 'Task' : `${text(row, 'payment_kind') ?? 'Payment'} payment`;
+        const title = kind === 'leads' ? text(row, 'traveller_name') ?? 'Unnamed traveller' : kind === 'bookings' ? text(row, 'booking_number') ?? 'Booking' : kind === 'rfqs' ? `RFQ V${String(row.version ?? 1)}` : kind === 'itineraries' ? text(row, 'title') ?? 'Itinerary' : `${text(row, 'payment_kind') ?? 'Payment'} payment`;
         const leadId = text(row, 'travel_lead_id');
         const href = kind === 'leads' ? `/leads/${id}` : kind === 'bookings' ? `/bookings/${id}` : leadId ? `/leads/${leadId}` : undefined;
         const destination = text(row, 'destination_primary');

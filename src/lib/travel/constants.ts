@@ -133,6 +133,24 @@ export const LEAD_EVENT_TYPES = {
   TASK_CREATED: 'task_created',
   TASK_COMPLETED: 'task_completed',
   ITINERARY_CREATED: 'itinerary_created',
+  ITINERARY_FINALIZED: 'itinerary_finalized',
+  ITINERARY_SHARED: 'itinerary_shared',
 } as const;
+
+/** Fixed destination choices shown while mapping a supplier. */
+export const SUPPLIER_DESTINATION_OPTIONS = [
+  { label: 'Kerala', slugs: ['kerala'] },
+  { label: 'Andaman', slugs: ['andaman'] },
+  { label: 'Tamilnadu', slugs: ['tamil-nadu', 'tamilnadu'] },
+  { label: 'Karnataka', slugs: ['karnataka'] },
+  { label: 'Maharashtra', slugs: ['maharashtra'] },
+  { label: 'UP', slugs: ['uttar-pradesh', 'up'] },
+  { label: 'Rajasthan', slugs: ['rajasthan'] },
+  { label: 'Himachal', slugs: ['himachal-pradesh', 'himachal'] },
+  { label: 'Uttrakhand', slugs: ['uttarakhand', 'uttrakhand'] },
+  { label: 'North East', slugs: ['north-east'] },
+  { label: 'Kashmir', slugs: ['kashmir'] },
+  { label: 'Ladakh', slugs: ['ladakh'] },
+] as const;
 
 export type LeadEventType = (typeof LEAD_EVENT_TYPES)[keyof typeof LEAD_EVENT_TYPES];

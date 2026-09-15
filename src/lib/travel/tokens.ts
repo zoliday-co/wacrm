@@ -18,12 +18,13 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
-export type TravelTokenKind = 'supplier_quote' | 'callback' | 'traveller_quote';
+export type TravelTokenKind = 'supplier_quote' | 'callback' | 'traveller_quote' | 'itinerary';
 
 const PREFIX: Record<TravelTokenKind, string> = {
   supplier_quote: 'sq_',
   callback: 'cb_',
   traveller_quote: 'tq_',
+  itinerary: 'it_',
 };
 
 export interface GeneratedTravelToken {

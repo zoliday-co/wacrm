@@ -21,6 +21,16 @@ import { ModeToggle } from "@/components/layout/mode-toggle";
 const pageTitles: Record<string, string> = {
   "/dashboard": "dashboard",
   "/inbox": "inbox",
+  // Oliday travel layer
+  "/leads": "leads",
+  "/rfqs": "rfqs",
+  "/bookings": "bookings",
+  "/calendar": "calendar",
+  "/suppliers": "suppliers",
+  "/itineraries": "itineraries",
+  "/followups": "followups",
+  "/payments": "payments",
+  "/reports": "reports",
   "/notifications": "notifications",
   "/contacts": "contacts",
   "/pipelines": "pipelines",

@@ -25,24 +25,35 @@ export const DEFAULT_DESTINATIONS: { name: string; children?: string[]; aliases?
   { name: 'North East', children: ['Sikkim', 'Gangtok', 'Darjeeling', 'Meghalaya', 'Shillong', 'Kaziranga'], aliases: ['northeast', 'north-east india'] },
   { name: 'Karnataka', children: ['Coorg', 'Chikmagalur', 'Hampi', 'Gokarna', 'Mysore'] },
   { name: 'Tamil Nadu', children: ['Ooty', 'Kodaikanal', 'Pondicherry', 'Rameswaram'] },
+  { name: 'Maharashtra', children: ['Mumbai', 'Pune', 'Lonavala', 'Mahabaleshwar'] },
+  { name: 'Uttar Pradesh', children: ['Agra', 'Varanasi', 'Lucknow', 'Ayodhya'], aliases: ['up', 'u.p.'] },
   { name: 'Ladakh', children: ['Leh', 'Nubra', 'Pangong'], aliases: ['leh ladakh'] },
 ];
 
 export async function seedDefaultDestinations(db: SupabaseClient, accountId: string): Promise<number> {
-  const { count } = await db.from('destinations').select('id', { count: 'exact', head: true }).eq('account_id', accountId);
-  if ((count ?? 0) > 0) return 0;
   let created = 0;
   for (const d of DEFAULT_DESTINATIONS) {
-    const { data: parent } = await db
-      .from('destinations')
-      .insert({ account_id: accountId, name: d.name, slug: slugify(d.name), aliases: d.aliases ?? [] })
-      .select('id')
-      .single();
+    const slug = slugify(d.name);
+    const { data: existing } = await db.from('destinations').select('id').eq('account_id', accountId).eq('slug', slug).maybeSingle();
+    let parent = existing;
+    if (!parent) {
+      const result = await db
+        .from('destinations')
+        .insert({ account_id: accountId, name: d.name, slug, aliases: d.aliases ?? [] })
+        .select('id')
+        .single();
+      parent = result.data;
+      if (parent) created += 1;
+    }
     if (!parent) continue;
-    created += 1;
     if (d.children?.length) {
-      const { error } = await db.from('destinations').insert(d.children.map((c) => ({ account_id: accountId, name: c, slug: slugify(c), parent_id: parent.id })));
-      if (!error) created += d.children.length;
+      for (const child of d.children) {
+        const childSlug = slugify(child);
+        const { data: found } = await db.from('destinations').select('id').eq('account_id', accountId).eq('slug', childSlug).maybeSingle();
+        if (found) continue;
+        const { error } = await db.from('destinations').insert({ account_id: accountId, name: child, slug: childSlug, parent_id: parent.id });
+        if (!error) created += 1;
+      }
     }
   }
   return created;
@@ -171,7 +182,7 @@ export function parseSupplierInput(raw: unknown, partial = false): Partial<Suppl
   if ('preferred' in s) out.preferred = Boolean(s.preferred);
   if ('active' in s) out.active = Boolean(s.active);
   if (Array.isArray(s.destinations)) {
-    out.destinations = s.destinations
+    const destinations = s.destinations
       .filter((d): d is Record<string, unknown> => typeof d === 'object' && d !== null && typeof d.destination_id === 'string')
       .map((d) => ({
         destination_id: d.destination_id as string,
@@ -179,6 +190,8 @@ export function parseSupplierInput(raw: unknown, partial = false): Partial<Suppl
         preferred: Boolean(d.preferred),
         service_types: Array.isArray(d.service_types) ? d.service_types.filter((t): t is string => typeof t === 'string').slice(0, 10) : [],
       }));
+    if (new Set(destinations.map((d) => d.destination_id)).size > 3) throw badRequest('A supplier can serve a maximum of 3 destinations');
+    out.destinations = destinations;
   }
   return out;
 }

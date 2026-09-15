@@ -11,5 +11,7 @@ export const GET = travelRoute('viewer', async (ctx, request) => {
     includeMessages: q.get('messages') !== '0',
     limit: Number(q.get('limit') ?? 200),
   });
-  return { entries };
+  // `timeline` is the public response key consumed by the lead detail UI.
+  // Keep `entries` as a compatibility alias for early API clients.
+  return { timeline: entries, entries };
 });

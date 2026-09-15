@@ -170,7 +170,7 @@ export async function ingestQualifiedLead(
     actorUserId: opts.actorUserId ?? null,
     title:
       payload.source.type === 'meta_whatsapp_ad'
-        ? `Traveller entered through Meta campaign${payload.source.campaign_name ? ` "${payload.source.campaign_name}"` : ''}`
+        ? `Lead created from Meta campaign${payload.source.campaign_name ? ` "${payload.source.campaign_name}"` : ''}`
         : `Lead created (${payload.source.type})`,
     details: {
       source: payload.source,

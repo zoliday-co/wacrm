@@ -4,7 +4,7 @@ Oliday extends WACRM instead of replacing its CRM primitives. Travellers remain 
 
 ## Database
 
-Apply migrations `041` through `048` in order. They add:
+Apply migrations `041` through `049` in order. They add:
 
 - the Oliday Travel pipeline and stable stage keys;
 - versioned travel requirements, RFQs, supplier and traveller quotes, and itineraries;
@@ -36,6 +36,7 @@ Set `TRAVEL_PUBLIC_BASE_URL` or `NEXT_PUBLIC_SITE_URL` in production. Oliday sen
 - `/supplier/quote/[token]`
 - `/trip/callback/[token]`
 - `/q/[token]`
+- `/trip/itinerary/[token]`
 
 Supplier links expose trip requirements needed to quote and omit traveller identity, phone, conversation, internal pricing, and other suppliers.
 
@@ -52,3 +53,5 @@ Bookings snapshot the accepted quote, requirement, itinerary, supplier quote, an
 ## Operational routes
 
 The sidebar exposes Leads, RFQs, Bookings, Suppliers, Itineraries, Follow-ups, Payments, and Reports. The lead detail screen combines the trip brief, recent WhatsApp history, quote comparison, traveller quote versions, itineraries, calls and notes, tasks, financials, and the unified timeline.
+
+The **Itinerary** tab is a versioned day-by-day builder with hotels, meals, transport, activities, inclusions, exclusions, and traveller notes. Agents can save a draft, finalize it, download an Oliday-branded PDF, or send a 30-day secure itinerary link to the linked WhatsApp conversation. The public view and PDF use `public/oliday_logo.png` and `public/oli.png` for branding.

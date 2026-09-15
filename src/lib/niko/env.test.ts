@@ -8,15 +8,24 @@ afterEach(() => {
 });
 
 describe("Niko routing gate", () => {
-  it("matches the pilot number with or without a country code", () => {
-    delete process.env.NIKO_PHONE_NUMBERS;
+  it("matches an allow-listed number with or without a country code", () => {
+    process.env.NIKO_PHONE_NUMBERS = "919742355944";
     expect(isNikoPhone("919742355944")).toBe(true);
     expect(isNikoPhone("+91 97423 55944")).toBe(true);
     expect(isNikoPhone("9742355944")).toBe(true);
   });
 
-  it("does NOT match another number — Oliday leads must fall through", () => {
+  it("routes nobody to Niko until NIKO_PHONE_NUMBERS is set", () => {
+    // The built-in default allow-list is empty, so an unconfigured
+    // deployment sends every inbound to Oliday. Niko is opt-in per
+    // number via the env var.
     delete process.env.NIKO_PHONE_NUMBERS;
+    expect(isNikoPhone("919742355944")).toBe(false);
+    expect(isNikoPhone("919901855444")).toBe(false);
+  });
+
+  it("does NOT match another number — Oliday leads must fall through", () => {
+    process.env.NIKO_PHONE_NUMBERS = "919742355944";
     expect(isNikoPhone("919901855444")).toBe(false);
     expect(isNikoPhone("917006171731")).toBe(false);
     expect(isNikoPhone(null)).toBe(false);

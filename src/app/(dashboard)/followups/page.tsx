@@ -1,2 +1,5 @@
-import { TravelListPage } from '@/components/travel/list-page';
-export default function Page() { return <TravelListPage kind="followups" />; }
+import { FollowupsPage } from '@/components/travel/followups-page';
+
+export default function Page() {
+  return <FollowupsPage />;
+}
