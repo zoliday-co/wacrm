@@ -52,6 +52,20 @@ Bookings snapshot the accepted quote, requirement, itinerary, supplier quote, an
 
 ## Operational routes
 
-The sidebar exposes Leads, RFQs, Bookings, Suppliers, Itineraries, Follow-ups, Payments, and Reports. The lead detail screen combines the trip brief, recent WhatsApp history, quote comparison, traveller quote versions, itineraries, calls and notes, tasks, financials, and the unified timeline.
+The sidebar exposes Leads, RFQs, Bookings, Trip calendar, Suppliers, Itineraries, Follow-ups, Payments, and Reports. The lead detail screen combines the trip brief, recent WhatsApp history, quote comparison, traveller quote versions, itineraries, calls and notes, tasks, financials, and the unified timeline.
+
+## Follow-up scheduler
+
+`travel_tasks` is the single work queue behind every scheduled action: callbacks the traveller booked, follow-ups an agent set while logging a call, supplier chasers, and payment collection. A task carries an assignee, a priority, a due time and an optional `remind_at`.
+
+The **Follow-ups** screen buckets open work as overdue, today, this week, later, and undated. Agents schedule, snooze, reassign and complete work there without opening the lead. A follow-up created against a lead also becomes that lead's next action, so the lead header and the queue never disagree.
+
+Reminders are delivered by the travel cron. When a task reaches `remind_at`, or its due time when no reminder time is set, its assignee receives an in-app notification and `reminded_at` is stamped so the reminder cannot repeat. Rescheduling clears that stamp and re-arms the reminder. Unassigned tasks are stamped without notifying anyone, because there is no one to tell.
+
+## Trip calendar
+
+The **Trip calendar** lays every non-cancelled booking on a month grid by its travel dates. A multi-day trip renders as one continuous bar across the days it spans, wrapping at week boundaries, and overlapping trips stack into lanes so none is hidden. Bars are coloured by state: in progress, settled, or carrying a customer balance. Due follow-ups appear on their own day cells, so departures and the work owed before them read together.
+
+The layout maths is pure and unit-tested in `src/lib/travel/calendar.ts`; the grid is built from `YYYY-MM-DD` strings rather than `Date` arithmetic so a trip never shifts a day for a viewer in another timezone. `GET /api/travel/calendar` serves the window.
 
 The **Itinerary** tab is a versioned day-by-day builder with hotels, meals, transport, activities, inclusions, exclusions, and traveller notes. Agents can save a draft, finalize it, download an Oliday-branded PDF, or send a 30-day secure itinerary link to the linked WhatsApp conversation. The public view and PDF use `public/oliday_logo.png` and `public/oli.png` for branding.
