@@ -14,7 +14,7 @@
 import { phonesMatch } from '@/lib/whatsapp/phone-utils';
 
 /** The MVP pilot number. Overridden wholesale by NIKO_PHONE_NUMBERS. */
-const DEFAULT_ALLOW_LIST = ['919742355944'];
+const DEFAULT_ALLOW_LIST = [''];
 
 export function nikoAllowList(): string[] {
   const raw = process.env.NIKO_PHONE_NUMBERS;
