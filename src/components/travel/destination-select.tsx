@@ -22,8 +22,38 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import type { Destination } from '@/types/travel';
+import { DEFAULT_DESTINATIONS } from '@/lib/travel/constants';
+import { slugify } from '@/lib/travel/matching';
 
 export const MAX_SUPPLIER_DESTINATIONS = 3;
+
+/** Matches `CATALOG_ID_PREFIX` in `@/lib/travel/suppliers`. */
+export const CATALOG_ID_PREFIX = 'catalog:';
+
+/**
+ * Every destination the dropdown offers: the account's own rows, plus
+ * any catalog entry it has not seeded yet as a `catalog:<slug>`
+ * placeholder. Saving a supplier against a placeholder creates the
+ * real row server-side, so an agent never has to know that seeding
+ * destinations is a separate step.
+ */
+export function offeredDestinations(accountDestinations: Destination[]): Destination[] {
+  const bySlug = new Set(accountDestinations.map((d) => d.slug));
+  const missing = DEFAULT_DESTINATIONS.filter((d) => !bySlug.has(slugify(d.name))).map(
+    (d): Destination => ({
+      id: `${CATALOG_ID_PREFIX}${slugify(d.name)}`,
+      account_id: '',
+      name: d.name,
+      slug: slugify(d.name),
+      parent_id: null,
+      aliases: d.aliases ?? [],
+      active: true,
+      created_at: '',
+      updated_at: '',
+    }),
+  );
+  return [...accountDestinations, ...missing];
+}
 
 export interface DestinationGroup {
   parent: Destination;
@@ -86,8 +116,9 @@ export function DestinationSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
-  const groups = useMemo(() => groupDestinations(destinations), [destinations]);
-  const byId = useMemo(() => new Map(destinations.map((d) => [d.id, d])), [destinations]);
+  const offered = useMemo(() => offeredDestinations(destinations), [destinations]);
+  const groups = useMemo(() => groupDestinations(offered), [offered]);
+  const byId = useMemo(() => new Map(offered.map((d) => [d.id, d])), [offered]);
   const selected = value.map((id) => byId.get(id)).filter((d): d is Destination => Boolean(d));
   const atMax = value.length >= max;
 
@@ -162,7 +193,7 @@ export function DestinationSelect({
           <div className="max-h-72 overflow-y-auto p-1">
             {visible.length === 0 ? (
               <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                {destinations.length === 0 ? 'No destinations yet — add the default list first.' : 'No match.'}
+                No match.
               </p>
             ) : (
               visible.map((group) => (

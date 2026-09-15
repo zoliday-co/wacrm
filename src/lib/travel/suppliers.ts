@@ -9,6 +9,7 @@ import { SUPPLIER_TYPES } from '@/types/travel';
 import { badRequest, notFound } from './errors';
 import { slugify } from './matching';
 import { DEFAULT_DESTINATIONS } from './constants';
+import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
 // ------------------------------------------------------------
@@ -239,12 +240,82 @@ export async function softDeleteSupplier(db: SupabaseClient, accountId: string, 
   if (error) throw new Error(`Failed to delete supplier: ${error.message}`);
 }
 
+/** Prefix marking a destination the catalog offers but this account has not seeded yet. */
+export const CATALOG_ID_PREFIX = 'catalog:';
+
+/**
+ * Turn `catalog:<slug>` placeholders into real destination ids,
+ * creating the row when it is missing.
+ *
+ * The supplier form offers the whole catalog whether or not an account
+ * has seeded it, so an agent never has to notice that destinations are
+ * a separate setup step. Creation goes through the service role
+ * because `destinations` is settings-class (admin-only) while adding a
+ * supplier is agent-level work. That is safe here precisely because
+ * the slug must name a DEFAULT_DESTINATIONS entry — the set of rows a
+ * caller can bring into existence is fixed in code, not supplied by
+ * the request, and the account id comes from the session.
+ */
+async function resolveCatalogIds(accountId: string, ids: string[]): Promise<Map<string, string>> {
+  const resolved = new Map<string, string>();
+  const wanted = ids.filter((id) => id.startsWith(CATALOG_ID_PREFIX));
+  if (wanted.length === 0) return resolved;
+
+  const admin = supabaseAdmin();
+  for (const placeholder of wanted) {
+    const slug = placeholder.slice(CATALOG_ID_PREFIX.length);
+    const entry = DEFAULT_DESTINATIONS.find((d) => slugify(d.name) === slug);
+    if (!entry) continue; // not in the catalog — refuse rather than create
+
+    const existing = await findDestinationIdBySlug(admin, accountId, slug);
+    if (existing) {
+      resolved.set(placeholder, existing);
+      continue;
+    }
+    const { data: created, error } = await admin
+      .from('destinations')
+      .insert({ account_id: accountId, name: entry.name, slug, aliases: entry.aliases ?? [] })
+      .select('id')
+      .single();
+    if (error || !created) {
+      // Lost a race against a concurrent create — re-read the winner.
+      const raced = await findDestinationIdBySlug(admin, accountId, slug);
+      if (raced) resolved.set(placeholder, raced);
+      continue;
+    }
+    resolved.set(placeholder, created.id as string);
+  }
+  return resolved;
+}
+
+async function findDestinationIdBySlug(
+  admin: SupabaseClient,
+  accountId: string,
+  slug: string,
+): Promise<string | null> {
+  const { data } = await admin
+    .from('destinations')
+    .select('id')
+    .eq('account_id', accountId)
+    .eq('slug', slug)
+    .maybeSingle();
+  return (data?.id as string | undefined) ?? null;
+}
+
 async function replaceSupplierDestinations(
   db: SupabaseClient,
   accountId: string,
   supplierId: string,
   mappings: NonNullable<SupplierInput['destinations']>
 ): Promise<void> {
+  const catalogIds = await resolveCatalogIds(
+    accountId,
+    mappings.map((m) => m.destination_id),
+  );
+  mappings = mappings.map((m) =>
+    catalogIds.has(m.destination_id) ? { ...m, destination_id: catalogIds.get(m.destination_id)! } : m,
+  );
+
   const ids = [...new Set(mappings.map((m) => m.destination_id))];
   if (ids.length) {
     const { data: valid } = await db.from('destinations').select('id').eq('account_id', accountId).in('id', ids);

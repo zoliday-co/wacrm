@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  CATALOG_ID_PREFIX,
   MAX_SUPPLIER_DESTINATIONS,
   filterGroups,
   groupDestinations,
+  offeredDestinations,
   toggleSelection,
 } from './destination-select';
 import type { Destination } from '@/types/travel';
@@ -96,5 +98,47 @@ describe('filterGroups', () => {
 
   it('returns nothing when nothing matches', () => {
     expect(filterGroups(groups, 'zzz')).toEqual([]);
+  });
+});
+
+describe('offeredDestinations', () => {
+  it('offers the whole catalog even when the account has seeded nothing', () => {
+    const offered = offeredDestinations([]);
+    const names = offered.map((d) => d.name);
+    for (const expected of [
+      'Kerala',
+      'Andaman',
+      'Ladakh',
+      'Rajasthan',
+      'Tamil Nadu',
+      'Karnataka',
+      'Himachal Pradesh',
+      'Gujarat',
+      'Uttarakhand',
+      'Kashmir',
+      'North East',
+    ]) {
+      expect(names).toContain(expected);
+    }
+    // Unseeded entries carry a placeholder id the server resolves on save.
+    expect(offered.every((d) => d.id.startsWith(CATALOG_ID_PREFIX))).toBe(true);
+  });
+
+  it('prefers the account\'s real row over the catalog placeholder', () => {
+    const seeded = dest('real-kerala', 'Kerala');
+    const offered = offeredDestinations([seeded]);
+    const kerala = offered.filter((d) => d.slug === 'kerala');
+    expect(kerala).toHaveLength(1);
+    expect(kerala[0].id).toBe('real-kerala');
+  });
+
+  it('keeps account-only destinations that are not in the catalog', () => {
+    const custom = dest('custom', 'Lakshadweep');
+    expect(offeredDestinations([custom]).some((d) => d.id === 'custom')).toBe(true);
+  });
+
+  it('groups a mix of seeded and catalog rows without duplicating a state', () => {
+    const groups = groupDestinations(offeredDestinations([dest('real-goa', 'Goa')]));
+    expect(groups.filter((g) => g.parent.name === 'Goa')).toHaveLength(1);
   });
 });
